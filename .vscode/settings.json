@@ -1,0 +1,20 @@
+{
+    "[asm]": {
+        "editor.insertSpaces": false,
+        "editor.tabSize": 4,
+        "editor.detectIndentation": false,
+        "editor.rulers": [
+            4,
+            12,
+            40
+        ],
+        "editor.renderWhitespace": "boundary",
+        "editor.trimAutoWhitespace": true
+    },
+    "files.associations": {
+        "*.inc": "asm",
+        "*.g": "asm"
+    },
+    "files.eol": "\n",
+    "files.trimTrailingWhitespace": true
+}

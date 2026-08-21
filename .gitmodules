@@ -1,0 +1,3 @@
+[submodule "Third Party/fasmg"]
+	path = Third Party/fasmg
+	url = https://github.com/tgrysztar/fasmg.git

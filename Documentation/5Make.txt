@@ -1,0 +1,85 @@
+  Specification of the 5Make build system
+
+# Builtin variables
+
+- $(OS)             => Always expands to `Core5` if makefile is ran through 5Make.
+- $(MAKEFILE_LIST)  => Contains the name of makefile loaded by 5Make in parsing order.
+- $(MAKE)           => Expands to the absolute path of the currently invoking make binary.
+- $@                => Name of the current target.
+- $<                => Name of the first prerequisite.
+- $?                => All normal prerequisites that are newer than the target.
+- $^                => All normal prerequisites, with duplicate names removed.
+- $+                => All normal prerequisites, preserving duplicates and their order.
+- $|                => All order-only prerequisites.
+- $*                => The stem matched by a pattern/suffix rule.
+
+# Wildcards in file names
+
+In all functions that support file name wildcards, wildcards are taken as `*`, `?` and `[...]`.
+The character ‘~’ at the beginning of a file name also has special significance. If alone, or followed by a slash, it represents your home directory.
+
+The `*` wildcard matches zero or more characters.
+The `?` wildcard matches exactly one character.
+The `[...]` wildcard matches any one of the characters enclosed in the brackets.
+- `file[123].c` matches `file1.c`, `file2.c`, and `file3.c`.
+- `file[a-z].c` matches any single lowercase letter.
+
+# Conditionals
+
+- `ifeq (arg1, arg2)`             => Compares two arguments for equality. If the arguments are equal, the following lines are processed.
+- `ifneq (arg1, arg2)`            => Compares two arguments for inequality. If the arguments are not equal, the following lines are processed.
+- `else`                          => Used within an `ifeq` or `ifneq` block to provide an alternative branch of execution if the preceding condition evaluates to false.
+- `endif`                         => Marks the end of a conditional block.
+
+# Textual functions
+
+- $(subst origin,replace,text)    => Replaces all occurences of `origin` in `text` with `replace`.
+- $(patsubst origin,replace,text) => {
+  Replaces all whitespace-separated words in `text` that match `origin` with `replace`. The `origin`
+  pattern may contain a `%` which serves as a wildcard, matching any number of characters in the word.
+  If `replace` also contains a `%`, it is replaced in the output with the text matched by the `%` inside
+  `origin`. All non-matched whitespace-separated words are left unchanged, and further `%` symbols ignored.
+}
+- $(filter pattern...,text)       => {
+  Removes all whitespace-separated words in `text` that do not match `pattern`. The `pattern`
+  pattern may contain a `%` which serves as a wildcard, matching any number of characters in the word.
+}
+- $(filter-out pattern...,text)   => {
+  Removes all whitespace-separated words in `text` that match `pattern`. The `pattern`
+  pattern may contain a `%` which serves as a wildcard, matching any number of characters in the word.
+}
+- $(firstword names...)           => Returns the first whitespace-separated word in the `names` series.
+- $(lastword names...)            => Returns the last whitespace-separated word in the `names` series.
+
+# File function
+
+- $(dir names...)                 => Extracts the directory-part of each file name in names.
+- $(suffix names...)              => Extracts the suffix of each file name in names.
+- $(basename names...)            => Extracts all but the suffix of each file name in names.
+- $(addsuffix suffix,names...)    => The value of `suffix` is appended to each whitespace-separated word in `names`.
+- $(addprefix prefix,names...)    => The value of `prefix` is prepended to each whitespace-separated word in `names`.
+- $(wildcard pattern)             => Matches and returns the value of all file names matching the `pattern` pattern.
+- $(realpath names...)            => Returns the canonical absolute path of each whitespace-separated word in `names`.
+- $(abspath names...)             => {
+  Returns the absolute path of each whitespace-separated word in `names`. Unlike `realpath` does not resolve symlinks.
+}
+
+# Special functions
+
+- $(shell command...)             => {
+  Invokes the default shell as specified in `$(SHELL)` with the command, captures and returns the standard output.
+}
+- $(call name,args...)            => {
+  Invokes the macro `pattern` with `text` as its arguments. The `text` is treated as a series of
+  whitespace-separated words. Each occurrence of `$(n)` in `pattern` (where `n` is an integer) is
+  replaced by the $(n)$(-th) word from `text`. If there are fewer words in `text` than there are
+  `$(n)` placeholders, the remaining placeholders expand to empty strings.
+}
+
+# Special targets
+
+- `.DEFAULT_GOAL` => Specifies the target that is built when no target is explicitly provided on the command line.
+- `.PHONY`        => {
+  Marks its prerequisites as phony targets. A phony target does not represent a file and is always
+  considered out of date when explicitly requested or encountered as a prerequisite.
+}
