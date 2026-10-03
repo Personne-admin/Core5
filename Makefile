@@ -88,9 +88,17 @@ include $(call escape_path,$(BOOTLOADER_MODULE))
 
 IMAGE_DIR		:= $(WORK_ROOT)$(PATH_SEPARATOR)Images
 STAGING_DIR		:= $(WORK_ROOT)$(PATH_SEPARATOR)Staging
-FLOPPY_IMG		:= $(IMAGE_DIR)$(PATH_SEPARATOR)Core5.img
 
 eSTAGING_DIR	:= $(call encode_path,$(STAGING_DIR))
+
+export IMAGE_DIR STAGING_DIR
+
+$(eSTAGING_DIR):
+	@$(CMD_MKDIR_P) "$(call decode_path,$(eSTAGING_DIR))"
+
+
+
+FLOPPY_IMG		:= $(IMAGE_DIR)$(PATH_SEPARATOR)Core5.img
 eFLOPPY_IMG		:= $(call encode_path,$(FLOPPY_IMG))
 
 FAT12_OEM_SIZE			:= 11 # JMP instruction + OEM name
@@ -98,7 +106,7 @@ FAT12_BPP_SIZE			:= 25
 FAT12_EBR_SIZE			:= 26
 FAT12_BOOTCODE_START	:= 62
 
-export IMAGE_DIR STAGING_DIR
+export FLOPPY_IMG
 
 $(eFLOPPY_IMG): $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2) $(eINSTALL_FAT_BOOT_FILE) | $(eSTAGING_DIR)
 	@$(CMD_MKDIR_P) "$(call decode_path,$(dir $@))"
@@ -107,15 +115,37 @@ $(eFLOPPY_IMG): $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2) $(eINSTALL_FAT_BOOT_
 	@$(call CMD_COPY_BLOCKS,$(call decode_path,$<),$(call decode_path,$@),1,450,62,62) $(SILENCE)
 	@$(call CMD_INSTALL_FAT_BOOT_FILE,$(call decode_path,$@),$(BOOTLOADER_STAGE2))
 
-$(eSTAGING_DIR):
-	@$(CMD_MKDIR_P) "$(call decode_path,$(eSTAGING_DIR))"
 
 
+HDD_IMG			:= $(IMAGE_DIR)$(PATH_SEPARATOR)Core5.hdd
+eHDD_IMG		:= $(call escape_path,$(HDD_IMG))
 
-ifeq ($(HOST),Linux)
-    include $(call escape_path,$(QUICK_EMULATOR_MODULE))
-    include $(call escape_path,$(BOCHS_MODULE))
-endif
+HDD_CYLINDERS			:= 2080
+HDD_HEADS				:= 16
+HDD_SPT					:= 63
+HDD_SIZE				:= 1073479680
+
+HDD_BIOS_HEADS			:= 32
+
+HDD_PARTITION_START		:= 2048
+HDD_PARTITION_OFFSET	:= 1048576
+
+HDD_PARTITION_SECTORS	:= 2092608
+
+HDD_SECTORS_PER_CLUSTER	:= 8
+
+MBR_BOOTCODE_SIZE		:= 440
+
+export HDD_IMG HDD_CYLINDERS HDD_HEADS HDD_SPT HDD_SIZE
+
+$(eHDD_IMG): $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2) $(eINSTALL_FAT_BOOT_FILE)
+	@$(CMD_MKDIR_P) "$(IMAGE_DIR)"
+	@$(CMD_RM_RF) "$@"
+	@$(call CMD_CREATE_IMAGE,$@,$(HDD_SIZE))
+	@$(call CMD_PARTITION,$@,$(HDD_PARTITION_START),$(HDD_PARTITION_SECTORS))
+	@$(call CMD_FORMAT_PARTITION,$@,$(HDD_PARTITION_OFFSET),$(HDD_PARTITION_SECTORS),$(HDD_PARTITION_START),$(HDD_BIOS_HEADS),$(HDD_SPT),$(HDD_SECTORS_PER_CLUSTER))
+	@$(call CMD_COPY_BLOCKS,$<,$@,1,$(MBR_BOOTCODE_SIZE),0,0) $(SILENCE)
+	@$(call CMD_INSTALL_FAT_BOOT_FILE,$@,$(BOOTLOADER_STAGE2))
 
 
 
@@ -151,17 +181,26 @@ FORCE_VERSION:
 
 
 
-.PHONY: all build image floppy bootloader clean version
+ifeq ($(HOST),Linux)
+    include $(call escape_path,$(QUICK_EMULATOR_MODULE))
+    include $(call escape_path,$(BOCHS_MODULE))
+endif
+
+
+
+.PHONY: all build image floppy hdd bootloader clean version
 
 all: build
 
-build: bootloader floppy
+build: bootloader floppy hdd
 
-bootloader: $(eBOOTLOADER_STAGE1_FLOPPY) $(eBOOTLOADER_STAGE2)
+bootloader: $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2)
 
 floppy: $(eFLOPPY_IMG)
 
-image: floppy
+hdd: $(eHDD_IMG)
+
+image: floppy hdd
 
 version: $(eVERSION_FILE)
 

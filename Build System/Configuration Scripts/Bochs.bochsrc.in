@@ -4,9 +4,9 @@ cpu: model=${CORE_BOCHS_CPU}, count=1
 pci: enabled=1, chipset=i440fx, advopts=noacpi
 
 ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14
-ata0-master: type=disk, path="${CORE_BOCHS_HDD_IMAGE}", mode=flat, cylinders=${CORE_BOCHS_HDD_CYLINDERS}, heads=${CORE_BOCHS_HDD_HEADS}, spt=${CORE_BOCHS_HDD_SECTORS}, translation=none
+ata0-master: type=disk, path="${CORE_BOCHS_HDD_IMAGE}", mode=flat, cylinders=${CORE_BOCHS_HDD_CYLINDERS}, heads=${CORE_BOCHS_HDD_HEADS}, spt=${CORE_BOCHS_HDD_SECTORS}, translation=lba
 
 floppya: 1_44="${CORE_BOCHS_FLOPPY_IMAGE}", status=inserted
-boot: floppy, disk
+boot: ${CORE_BOCHS_BOOT}
 
 magic_break: enabled=1

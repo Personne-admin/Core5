@@ -1,70 +1,73 @@
-FAT12.Error.Invalid = 1
-FAT12.Error.Full = 2
-FAT12.Error.TooLarge = 3
+Install.Error.Invalid = 1
+Install.Error.Full = 2
+Install.Error.TooLarge = 3
+Install.Error.GapTooSmall = 4
+
+Install.MaxStage2Sectors = 59
 
 segment readable writeable
-FAT12.Image dd 0
-FAT12.ImageSize dd 0
-FAT12.Source dd 0
-FAT12.SourceSize dd 0
-FAT12.SourcePath dd 0
-FAT12.BytesPerSector dd 0
-FAT12.BytesPerCluster dd 0
-FAT12.FatOffset dd 0
-FAT12.FatBytes dd 0
-FAT12.FatCount dd 0
-FAT12.RootOffset dd 0
-FAT12.RootEntries dd 0
-FAT12.DataOffset dd 0
-FAT12.ClusterCount dd 0
-FAT12.FirstCluster dd 0
+Install.Image dd 0
+Install.ImageSize dd 0
+Install.Source dd 0
+Install.SourceSize dd 0
+Install.SourcePath dd 0
+Install.BytesPerSector dd 0
+Install.BytesPerCluster dd 0
+Install.FatOffset dd 0
+Install.FatBytes dd 0
+Install.FatCount dd 0
+Install.RootOffset dd 0
+Install.RootEntries dd 0
+Install.DataOffset dd 0
+Install.ClusterCount dd 0
+Install.FirstCluster dd 0
 
-FAT12.Offset.BytesPerSector = 11
-FAT12.Offset.SectorsPerCluster = 13
-FAT12.Offset.ReservedSectors = 14
-FAT12.Offset.FATs = 16
-FAT12.Offset.RootDirectoryEntries = 17
-FAT12.Offset.Sectors = 19
-FAT12.Offset.SectorsPerFAT = 22
-FAT12.Offset.LargeSectors = 32
+Install.Offset.BytesPerSector = 11
+Install.Offset.SectorsPerCluster = 13
+Install.Offset.ReservedSectors = 14
+Install.Offset.FATs = 16
+Install.Offset.RootDirectoryEntries = 17
+Install.Offset.Sectors = 19
+Install.Offset.SectorsPerFAT = 22
+Install.Offset.LargeSectors = 32
 
 segment readable executable
 
 ; eax = image, edx = image size, ecx = source, ebx = source size, esi = source path
 ; returns zero on success
-FAT12.Install:
-	mov	[FAT12.Image], eax
-	mov	[FAT12.ImageSize], edx
-	mov	[FAT12.Source], ecx
-	mov	[FAT12.SourceSize], ebx
-	mov	[FAT12.SourcePath], esi
+Install.Install:
+	mov	[Install.Image], eax
+	mov	[Install.ImageSize], edx
+	mov	[Install.Source], ecx
+	mov	[Install.SourceSize], ebx
+	mov	[Install.SourcePath], esi
 
 	; the image must have the bios signature
 	cmp	word [eax + 510], 0xAA55
 	jne	.Invalid
 
-	; TODO support fat32 installation.
-	call	FAT12.IsMbrFat32
+	; mbr + fat32, stage2 goes into reserved sectors before the first partition
+	call	Install.IsMbrFat32
 	test	eax, eax
-	jnz	.Success
+	jnz	Install.InstallReserved
 
 	; fat12 path
 
-	call	FAT12.ReadLayout
+	call	Install.ReadLayout
 	test	eax, eax
 	jnz	.Done
 
-	call	FAT12.FindDirectorySlot
+	call	Install.FindDirectorySlot
 	test	eax, eax
 	js	.Full
 
 	push	eax
-	call	FAT12.AllocateAndCopy
+	call	Install.AllocateAndCopy
 	test	eax, eax
 	jnz	.AllocationFailed
 
 	pop	eax
-	call	FAT12.InsertDirectoryEntry
+	call	Install.InsertDirectoryEntry
 .Success:
 	xor	eax, eax
 .Done:
@@ -75,17 +78,17 @@ FAT12.Install:
 	retn
 
 .Invalid:
-	mov	eax, FAT12.Error.Invalid
+	mov	eax, Install.Error.Invalid
 	retn
 
 .Full:
-	mov	eax, FAT12.Error.Full
+	mov	eax, Install.Error.Full
 	retn
 
 ; detect if the image is mbr + fat32 rather than fat12
-FAT12.IsMbrFat32:
+Install.IsMbrFat32:
 	; seek to the first partition entry in mbr
-	mov	edx, [FAT12.Image]
+	mov	edx, [Install.Image]
 	lea edx, [edx + 446]
 
 	; scan up to the four primary paritions
@@ -118,12 +121,12 @@ FAT12.IsMbrFat32:
 	retn
 
 ; validate the BPB and calculate all byte offsets.
-FAT12.ReadLayout:
+Install.ReadLayout:
 	push	ebx esi edi ebp
 
 	; verify bytes per sector to be at least 512
-	mov	esi, [FAT12.Image]
-	movzx	eax, word [esi + FAT12.Offset.BytesPerSector]
+	mov	esi, [Install.Image]
+	movzx	eax, word [esi + Install.Offset.BytesPerSector]
 	cmp	eax, 512
 	jb	.Invalid
 
@@ -133,9 +136,9 @@ FAT12.ReadLayout:
 	test	eax, edx
 	jnz	.Invalid
 
-	mov	[FAT12.BytesPerSector], eax
+	mov	[Install.BytesPerSector], eax
 
-	movzx	ebx, byte [esi + FAT12.Offset.SectorsPerCluster]
+	movzx	ebx, byte [esi + Install.Offset.SectorsPerCluster]
 	test	ebx, ebx
 	jz	.Invalid
 
@@ -150,41 +153,41 @@ FAT12.ReadLayout:
 	test	edx, edx
 	jnz	.Invalid
 
-	mov	[FAT12.BytesPerCluster], eax
+	mov	[Install.BytesPerCluster], eax
 
-	movzx	ebp, word [esi + FAT12.Offset.ReservedSectors]
+	movzx	ebp, word [esi + Install.Offset.ReservedSectors]
 	test	ebp, ebp
 	jz	.Invalid
 
-	movzx	edi, byte [esi + FAT12.Offset.FATs]
+	movzx	edi, byte [esi + Install.Offset.FATs]
 	test	edi, edi
 	jz	.Invalid
 
-	mov	[FAT12.FatCount], edi
-	movzx	ecx, word [esi + FAT12.Offset.RootDirectoryEntries]
+	mov	[Install.FatCount], edi
+	movzx	ecx, word [esi + Install.Offset.RootDirectoryEntries]
 	test	ecx, ecx
 	jz	.Invalid
 
-	mov	[FAT12.RootEntries], ecx
-	movzx	ebx, word [esi + FAT12.Offset.SectorsPerFAT]
+	mov	[Install.RootEntries], ecx
+	movzx	ebx, word [esi + Install.Offset.SectorsPerFAT]
 	test	ebx, ebx
 	jz	.Invalid
 
 	; calculate the number of bytes per FAT
 	mov	eax, ebx
-	mul	dword [FAT12.BytesPerSector]
+	mul	dword [Install.BytesPerSector]
 	test	edx, edx
 	jnz	.Invalid
 
-	mov	[FAT12.FatBytes], eax
+	mov	[Install.FatBytes], eax
 
 	; calculate the FAT offset
 	mov	eax, ebp
-	mul	dword [FAT12.BytesPerSector]
+	mul	dword [Install.BytesPerSector]
 	test	edx, edx
 	jnz	.Invalid
 
-	mov	[FAT12.FatOffset], eax
+	mov	[Install.FatOffset], eax
 
 	; calculate the root directory offset
 	mov	eax, ebx
@@ -192,52 +195,52 @@ FAT12.ReadLayout:
 	add	eax, ebp
 	jc	.Invalid
 
-	mul	dword [FAT12.BytesPerSector]
+	mul	dword [Install.BytesPerSector]
 	test	edx, edx
 	jnz	.Invalid
 
-	mov	[FAT12.RootOffset], eax
+	mov	[Install.RootOffset], eax
 
 	; calculate the data region offset
 	mov	eax, ecx
 	shl	eax, 5
-	add	eax, [FAT12.BytesPerSector]
+	add	eax, [Install.BytesPerSector]
 	dec	eax
 
 	xor	edx, edx
-	div	dword [FAT12.BytesPerSector]
-	mul	dword [FAT12.BytesPerSector]
+	div	dword [Install.BytesPerSector]
+	mul	dword [Install.BytesPerSector]
 
-	add	eax, [FAT12.RootOffset]
+	add	eax, [Install.RootOffset]
 	jc	.Invalid
 
-	mov	[FAT12.DataOffset], eax
+	mov	[Install.DataOffset], eax
 
-	; if FAT12.Sectors == 0, use the large sector count entry
-	movzx	eax, word [esi + FAT12.Offset.Sectors]
+	; if Install.Sectors == 0, use the large sector count entry
+	movzx	eax, word [esi + Install.Offset.Sectors]
 	test	eax, eax
 	jnz	.HaveSectors
 
-	mov	eax, [esi + FAT12.Offset.LargeSectors]
+	mov	eax, [esi + Install.Offset.LargeSectors]
 .HaveSectors:
 	test	eax, eax
 	jz	.Invalid
 
 	; calculate the total size
-	mul	dword [FAT12.BytesPerSector]
+	mul	dword [Install.BytesPerSector]
 	test	edx, edx
 	jnz	.Invalid
 
 	; ensure that the disk image is not smaller than fat expects
-	cmp	eax, [FAT12.ImageSize]
+	cmp	eax, [Install.ImageSize]
 	ja	.Invalid
 
-	sub	eax, [FAT12.DataOffset]
+	sub	eax, [Install.DataOffset]
 	jc	.Invalid
 
 	; calculate the data area cluster count
 	xor	edx, edx
-	div	dword [FAT12.BytesPerCluster]
+	div	dword [Install.BytesPerCluster]
 	test	eax, eax
 	jz	.Invalid
 
@@ -245,7 +248,7 @@ FAT12.ReadLayout:
 	cmp	eax, 4085
 	jae	.Invalid
 
-	mov	[FAT12.ClusterCount], eax
+	mov	[Install.ClusterCount], eax
 
 	; calculate the number of bytes required to address the data area
 	add	eax, 2
@@ -254,26 +257,26 @@ FAT12.ReadLayout:
 	shr	eax, 1
 
 	; verify the FAT is capable of addressing the entire data area
-	cmp	eax, [FAT12.FatBytes]
+	cmp	eax, [Install.FatBytes]
 	ja	.Invalid
 
 	xor	eax, eax
 	jmp	.Done
 
 .Invalid:
-	mov	eax, FAT12.Error.Invalid
+	mov	eax, Install.Error.Invalid
 .Done:
 	pop	ebp edi esi ebx
 	retn
 
 ; find a free entry in the root directory
-FAT12.FindDirectorySlot:
-	mov	edx, [FAT12.Image]
-	add	edx, [FAT12.RootOffset]
+Install.FindDirectorySlot:
+	mov	edx, [Install.Image]
+	add	edx, [Install.RootOffset]
 	xor	eax, eax
 	; iterate the root directory directory entries
 .Next:
-	cmp	eax, [FAT12.RootEntries]
+	cmp	eax, [Install.RootEntries]
 	jae	.Full
 
 	; found free spot
@@ -296,37 +299,37 @@ FAT12.FindDirectorySlot:
 	retn
 
 ; allocates free data clusters for and copies the source file to them
-FAT12.AllocateAndCopy:
+Install.AllocateAndCopy:
 	push	ebx esi edi ebp
 
-	mov	eax, [FAT12.SourceSize]
+	mov	eax, [Install.SourceSize]
 	test	eax, eax
 	jz	.Empty
 
-	add	eax, [FAT12.BytesPerCluster]
+	add	eax, [Install.BytesPerCluster]
 	jc	.TooLarge
 
 	; calculate the number of clusters needed for the source file
 	dec	eax
 	xor	edx, edx
-	div	dword [FAT12.BytesPerCluster]
+	div	dword [Install.BytesPerCluster]
 	mov	ebp, eax
 
 	; verify the source file fits onto the image
-	cmp	eax, [FAT12.ClusterCount]
+	cmp	eax, [Install.ClusterCount]
 	ja	.TooLarge
 
 	; verify there are enough free cluster for the source file
 	mov	esi, 2
 	xor	ebx, ebx
 .CountFree:
-	mov	eax, [FAT12.ClusterCount]
+	mov	eax, [Install.ClusterCount]
 	inc	eax
 	cmp	esi, eax
 	ja	.TooLarge
 
 	mov	eax, esi
-	call	FAT12.GetEntry
+	call	Install.GetEntry
 	test	eax, eax
 	jnz	.CountNext
 
@@ -343,13 +346,13 @@ FAT12.AllocateAndCopy:
 	xor	edi, edi
 	xor	ebx, ebx
 .Find:
-	mov	eax, [FAT12.ClusterCount]
+	mov	eax, [Install.ClusterCount]
 	inc	eax
 	cmp	esi, eax
 	ja	.TooLarge
 
 	mov	eax, esi
-	call	FAT12.GetEntry
+	call	Install.GetEntry
 	test	eax, eax
 	jnz	.Advance
 
@@ -357,13 +360,13 @@ FAT12.AllocateAndCopy:
 	jnz	.Link
 
 	; store the first allocated cluster
-	mov	[FAT12.FirstCluster], esi
+	mov	[Install.FirstCluster], esi
 	jmp	.Record
 
 .Link:
 	mov	eax, edi
 	mov	edx, esi
-	call	FAT12.SetEntry
+	call	Install.SetEntry
 .Record:
 	mov	edi, esi
 	inc	ebx
@@ -376,22 +379,22 @@ FAT12.AllocateAndCopy:
 .Finish:
 	mov	eax, edi
 	mov	edx, 0xFFF
-	call	FAT12.SetEntry
+	call	Install.SetEntry
 
-	mov	ebx, [FAT12.FirstCluster]
-	mov	ebp, [FAT12.SourceSize]
-	mov	esi, [FAT12.Source]
+	mov	ebx, [Install.FirstCluster]
+	mov	ebp, [Install.SourceSize]
+	mov	esi, [Install.Source]
 .Copy:
 	; compute the address of the ebx'th cluster
 	mov	eax, ebx
 	sub	eax, 2
-	mul	dword [FAT12.BytesPerCluster]
-	add	eax, [FAT12.DataOffset]
-	add	eax, [FAT12.Image]
+	mul	dword [Install.BytesPerCluster]
+	add	eax, [Install.DataOffset]
+	add	eax, [Install.Image]
 	mov	edi, eax
 
 	; every cluster is full except possibly the last
-	mov	ecx, [FAT12.BytesPerCluster]
+	mov	ecx, [Install.BytesPerCluster]
 	cmp	ebp, ecx
 	jae	.CountReady
 	mov	ecx, ebp
@@ -402,7 +405,7 @@ FAT12.AllocateAndCopy:
 	rep	movsb
 
 	; zero the tail of the cluster
-	mov	ecx, [FAT12.BytesPerCluster]
+	mov	ecx, [Install.BytesPerCluster]
 	sub	ecx, edx
 	xor	eax, eax
 	rep	stosb
@@ -413,33 +416,33 @@ FAT12.AllocateAndCopy:
 
 	; get the next entry
 	mov	eax, ebx
-	call	FAT12.GetEntry
+	call	Install.GetEntry
 	mov	ebx, eax
 	jmp	.Copy
 
 .Empty:
-	mov	dword [FAT12.FirstCluster], 0
+	mov	dword [Install.FirstCluster], 0
 .Success:
 	xor	eax, eax
 	jmp	.Done
 
 .TooLarge:
-	mov	eax, FAT12.Error.TooLarge
+	mov	eax, Install.Error.TooLarge
 .Done:
 	pop	ebp edi esi ebx
 	retn
 
 ; eax = cluster number
 ; returns eax = 12-bit fat entry for that cluster
-FAT12.GetEntry:
+Install.GetEntry:
 	push	ebx
 
 	; calculate the address of the entry
 	mov	ebx, eax
 	shr	eax, 1
 	add	eax, ebx
-	add	eax, [FAT12.FatOffset]
-	add	eax, [FAT12.Image]
+	add	eax, [Install.FatOffset]
+	add	eax, [Install.Image]
 
 	; load-now determine parity later, movzx doesn't touch flags
 	movzx	eax, word [eax]
@@ -455,15 +458,15 @@ FAT12.GetEntry:
 	retn
 
 ; eax = cluster number, edx = new 12-bit value
-FAT12.SetEntry:
+Install.SetEntry:
 	push	eax ebx ecx edx esi
 
 	; calculate the address of the entry
 	mov	ebx, eax
 	shr	eax, 1
 	add	eax, ebx
-	add	eax, [FAT12.FatOffset]
-	add	eax, [FAT12.Image]
+	add	eax, [Install.FatOffset]
+	add	eax, [Install.Image]
 
 	; prepare the mask based on the parity
 	and	edx, 0xFFF
@@ -477,7 +480,7 @@ FAT12.SetEntry:
 	shl	edx, 4
 	mov	esi, 0x000F
 .Prepared:
-	mov	ecx, [FAT12.FatCount]
+	mov	ecx, [Install.FatCount]
 .Next:
 	; rmf as the word is shared with the neighbour entry
 	movzx	ebx, word [eax]
@@ -485,7 +488,7 @@ FAT12.SetEntry:
 	or	ebx, edx
 	mov	[eax], bx
 
-	add	eax, [FAT12.FatBytes]
+	add	eax, [Install.FatBytes]
 	dec	ecx
 	jnz	.Next
 
@@ -493,11 +496,11 @@ FAT12.SetEntry:
 	retn
 
 ; eax = index of the free slot
-FAT12.InsertDirectoryEntry:
+Install.InsertDirectoryEntry:
 	push	esi edi
 
-	mov	edi, [FAT12.Image]
-	add	edi, [FAT12.RootOffset]
+	mov	edi, [Install.Image]
+	add	edi, [Install.RootOffset]
 
 	; if the free slot is already slot 0, there is nothing to move
 	test	eax, eax
@@ -541,15 +544,94 @@ FAT12.InsertDirectoryEntry:
 
 	; 24: last write date
 	; 26: first cluster
-	mov	eax, [FAT12.FirstCluster]
+	mov	eax, [Install.FirstCluster]
 	shl	eax, 16
 	or	eax, 0x21
 	mov	[edi + 24], eax
 
 	; 28: file size in bytes
-	mov	eax, [FAT12.SourceSize]
+	mov	eax, [Install.SourceSize]
 	mov	[edi + 28], eax
 
 	pop	edi esi
 	xor	eax, eax
+	retn
+
+; returns zero on success
+Install.InstallReserved:
+	push	ebx esi edi
+
+	; find the lowest starting lba of any used partition
+	mov	esi, [Install.Image]
+	lea esi, [esi + 446]
+	or	ebx, -1
+	mov	ecx, 4
+.Scan:
+	; empty entry
+	cmp	byte [esi + 4], 0
+	je	.Skip
+	mov	eax, [esi + 8]
+	test	eax, eax
+	jz	.Skip
+
+	; already have a better candidate
+	cmp	eax, ebx
+	jae	.Skip
+
+	; update the candidate
+	mov	ebx, eax
+.Skip:
+	; move to the next partition
+	add	esi, 16
+	loop	.Scan
+
+	; IsMbrFat32 guarantees one valid entry, the gap is LBA 1..start-1
+	dec	ebx
+	jz	.GapTooSmall
+
+	; stage1 cannot load more than its window regardless of the gap
+	cmp	ebx, Install.MaxStage2Sectors
+	jbe	.HaveGap
+	mov	ebx, Install.MaxStage2Sectors
+.HaveGap:
+	; calculate the number of sectors the source needs
+	mov	eax, [Install.SourceSize]
+	add	eax, 511
+	jc	.GapTooSmall
+	shr	eax, 9
+	cmp	eax, ebx
+	ja	.GapTooSmall
+
+	; the image must actually contain those sectors
+	inc	eax
+	shl	eax, 9
+	cmp	eax, [Install.ImageSize]
+	ja	.Invalid
+
+	; copy the source to LBA 1
+	mov	edi, [Install.Image]
+	add	edi, 512
+	mov	esi, [Install.Source]
+	mov	ecx, [Install.SourceSize]
+	mov	edx, ecx
+	rep	movsb
+
+	; zero the tail of the last sector
+	neg	edx
+	and	edx, 511
+	mov	ecx, edx
+	xor	eax, eax
+	rep	stosb
+
+	xor	eax, eax
+	jmp	.Done
+
+.GapTooSmall:
+	mov	eax, Install.Error.GapTooSmall
+	jmp	.Done
+
+.Invalid:
+	mov	eax, Install.Error.Invalid
+.Done:
+	pop	edi esi ebx
 	retn

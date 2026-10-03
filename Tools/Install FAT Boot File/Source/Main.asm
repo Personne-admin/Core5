@@ -6,7 +6,7 @@ end if
 
 include 'String.asm'
 include 'Arguments.asm'
-include 'FAT12.asm'
+include 'Install.asm'
 
 segment readable writeable
 
@@ -24,6 +24,9 @@ Main.FormatError.Length = $ - Main.FormatError
 
 Main.SpaceError db 'Install FAT Boot File: FAT12 image has insufficient space', 10
 Main.SpaceError.Length = $ - Main.SpaceError
+
+Main.GapError db 'Install FAT Boot File: stage2 does not fit before the first partition', 10
+Main.GapError.Length = $ - Main.GapError
 
 Main.SourceBuffer dd 0
 Main.SourceSize dd 0
@@ -56,12 +59,15 @@ Main:
 	mov	ecx, [Main.SourceBuffer]
 	mov	ebx, [Main.SourceSize]
 	mov	esi, [Arguments.SourcePath]
-	call	FAT12.Install
+	call	Install.Install
 	test	eax, eax
 	jz	.WriteImage
 
-	cmp	eax, FAT12.Error.Invalid
+	cmp	eax, Install.Error.Invalid
 	je	.ReportFormatError
+	cmp	eax, Install.Error.GapTooSmall
+	je	.ReportGapError
+
 	jmp	.ReportSpaceError
 
 .WriteImage:
@@ -103,6 +109,11 @@ Main:
 .ReportFormatError:
 	mov	eax, Main.FormatError
 	mov	ecx, Main.FormatError.Length
+	jmp	.Report
+
+.ReportGapError:
+	mov	eax, Main.GapError
+	mov	ecx, Main.GapError.Length
 	jmp	.Report
 
 .ReportSpaceError:
