@@ -15,7 +15,7 @@ load_address=$5
 temporary="${output}.tmp"
 trap 'rm -f -- "$temporary"' EXIT
 
-arguments=(-I binary -O elf32-i386 -B i386 --rename-section .data=.text,alloc,load,readonly,code,contents)
+arguments=(-I binary -O elf32-i386 -B i386 --rename-section .data=.text,alloc,load,readonly,code,contents --wildcard --strip-symbol '_binary_*')
 current_global=
 symbol_count=0
 
