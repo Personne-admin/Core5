@@ -15,11 +15,11 @@ endif
 
 ifeq ($(HOST),Core5)
     CMD_FORMAT			= Format-Fat -Image "$(1)" -Size $(2) -Format $(3)
-    CMD_COPY_BLOCKS	    = Write-Blocks -Source "$(1)" -Target "$(2)" -BlockSize $(3) -Count $(4) -SourceOffset $(5) -TargetOffset $(6)
+    CMD_COPY_BLOCKS		= Write-Blocks -Source "$(1)" -Target "$(2)" -BlockSize $(3) -Count $(4) -SourceOffset $(5) -TargetOffset $(6)
     CMD_MCOPY			= Copy-To-Disk -Target "$(1)" -Source "$(2)" -Path "\$(3)"
 else
-    CMD_FORMAT			= mformat -i "$(1)" -f $(2) -C
-    CMD_COPY_BLOCKS	    = dd if="$(1)" of="$(2)" bs=$(3) count=$(4) skip=$(5) seek=$(6) conv=notrunc
+    CMD_FORMAT			= mformat -i "$(1)" -f $$(( $(2) / 2 )) -C
+    CMD_COPY_BLOCKS		= dd if="$(1)" of="$(2)" bs=$(3) count=$(4) skip=$(5) seek=$(6) conv=notrunc
     CMD_MCOPY			= mcopy -i "$(1)" "$(2)" "::/$(3)"
 endif
 

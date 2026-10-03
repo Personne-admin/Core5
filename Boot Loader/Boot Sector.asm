@@ -37,6 +37,7 @@ Start:
 	mov	ss, ax
 	mov	sp, 0x7C00
 
+	mov es, ax
 	mov	ds, ax
 	cld
 
