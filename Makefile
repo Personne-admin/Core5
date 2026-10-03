@@ -100,7 +100,7 @@ FAT12_BOOTCODE_START	:= 62
 
 export IMAGE_DIR STAGING_DIR
 
-$(eFLOPPY_IMG): $(eBOOTLOADER_STAGE1_FLOPPY) $(eBOOTLOADER_STAGE2) $(eINSTALL_FAT_BOOT_FILE) | $(eSTAGING_DIR)
+$(eFLOPPY_IMG): $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2) $(eINSTALL_FAT_BOOT_FILE) | $(eSTAGING_DIR)
 	@$(CMD_MKDIR_P) "$(call decode_path,$(dir $@))"
 	@$(call CMD_FORMAT,$(call decode_path,$@),2880,fat12)
 	@$(call CMD_COPY_BLOCKS,$(call decode_path,$<),$(call decode_path,$@),1,3,0,0) $(SILENCE)
