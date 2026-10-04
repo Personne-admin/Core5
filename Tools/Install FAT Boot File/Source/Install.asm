@@ -46,7 +46,7 @@ Install.Install:
 	cmp	word [eax + 510], 0xAA55
 	jne	.Invalid
 
-	; mbr + fat32, stage2 goes into reserved sectors before the first partition
+	; mbr + fat32, stage2 goes into the gap before the first partition
 	call	Install.IsMbrFat32
 	test	eax, eax
 	jnz	Install.InstallReserved
