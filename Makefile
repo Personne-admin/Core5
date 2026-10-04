@@ -13,7 +13,7 @@ else
         SHELL			:= /bin/bash
         SILENCE			:= 2>/dev/null
     else
-        $(error Unsupported architecture $(UNAME_S))
+        $(error Unsupported host $(UNAME_S))
     endif
 endif
 
@@ -102,7 +102,7 @@ FLOPPY_IMG		:= $(IMAGE_DIR)$(PATH_SEPARATOR)Core5.img
 eFLOPPY_IMG		:= $(call encode_path,$(FLOPPY_IMG))
 
 FAT12_OEM_SIZE			:= 11 # JMP instruction + OEM name
-FAT12_BPP_SIZE			:= 25
+FAT12_BPB_SIZE			:= 25
 FAT12_EBR_SIZE			:= 26
 FAT12_BOOTCODE_START	:= 62
 
@@ -118,7 +118,7 @@ $(eFLOPPY_IMG): $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2) $(eINSTALL_FAT_BOOT_
 
 
 HDD_IMG			:= $(IMAGE_DIR)$(PATH_SEPARATOR)Core5.hdd
-eHDD_IMG		:= $(call escape_path,$(HDD_IMG))
+eHDD_IMG		:= $(call encode_path,$(HDD_IMG))
 
 HDD_CYLINDERS			:= 2080
 HDD_HEADS				:= 16
@@ -144,21 +144,21 @@ $(eHDD_IMG): $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2) $(eINSTALL_FAT_BOOT_FIL
 	@$(call CMD_CREATE_IMAGE,$@,$(HDD_SIZE))
 	@$(call CMD_PARTITION,$@,$(HDD_PARTITION_START),$(HDD_PARTITION_SECTORS))
 	@$(call CMD_FORMAT_PARTITION,$@,$(HDD_PARTITION_OFFSET),$(HDD_PARTITION_SECTORS),$(HDD_PARTITION_START),$(HDD_BIOS_HEADS),$(HDD_SPT),$(HDD_SECTORS_PER_CLUSTER))
-	@$(call CMD_COPY_BLOCKS,$<,$@,1,$(MBR_BOOTCODE_SIZE),0,0) $(SILENCE)
+	@$(call CMD_COPY_BLOCKS,$(call decode_path,$<),$@,1,$(MBR_BOOTCODE_SIZE),0,0) $(SILENCE)
 	@$(call CMD_INSTALL_FAT_BOOT_FILE,$@,$(BOOTLOADER_STAGE2))
 
 
 
 ifeq ($(HOST),Core5)
     UPDATE_VERSION = \
-        If ( File-Exists "$(call decode_path,$@)" ) Then
-            Set CURRENT "%%$(CMD_CAT)"$(call decode_path,$@)"%%";
-        Else
-            Set CURRENT "";
-        End
-        If ( %CURRENT% != "$(VERSION)" ) Then
-            $(CMD_PRINTF) '%s\n' "$(VERSION)" > "$(call decode_path,$@).tmp";
-			$(CMD_MV) "$(call decode_path,$@).tmp" "$(call decode_path,$@)";
+        If ( File-Exists "$(call decode_path,$@)" ) Then \
+            Set CURRENT "%%$(CMD_CAT)"$(call decode_path,$@)"%%"; \
+        Else \
+            Set CURRENT ""; \
+        End \
+        If ( %CURRENT% != "$(VERSION)" ) Then \
+            $(CMD_PRINTF) '%s\n' "$(VERSION)" > "$(call decode_path,$@).tmp"; \
+			$(CMD_MV) "$(call decode_path,$@).tmp" "$(call decode_path,$@)"; \
         End
 else
     UPDATE_VERSION = \

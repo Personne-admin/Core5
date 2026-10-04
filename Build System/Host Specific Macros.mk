@@ -1,6 +1,6 @@
 
 ifeq ($(HOST),Core5)
-    CMD_MKDIR_P			:= Make-Dir -Recrusive
+    CMD_MKDIR_P			:= Make-Dir -Recursive
     CMD_RM_RF			:= Remove -All -Force
     CMD_MV				:= Move-File
     CMD_CAT				:= Read-File
