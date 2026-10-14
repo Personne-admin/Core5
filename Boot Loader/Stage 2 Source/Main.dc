@@ -1,0 +1,6 @@
+module Main;
+
+@nomangle
+public void loader_entry() {
+    for ;; {}
+}

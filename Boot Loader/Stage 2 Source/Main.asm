@@ -28,8 +28,7 @@ Stage2.Start:
 	call	EnableA20
 	call	EnterUnreal
 
-	mov	si, Message.Ready
-	call	Print
+	call	loader_entry
 
 	cli
 .Halt:
@@ -72,11 +71,13 @@ Fatal:
 	int	0x19
 
 Message.Banner		db 'Core5 stage 2 loader', 13, 10, 0
-Message.Ready		db '!', 13, 10, 0
 Message.Not386		db 'Boot error: a 386 or newer is required', 13, 10, 0
 Message.NoA20		db 'Boot error: cannot enable the A20 line', 13, 10, 0
 Message.PressKey	db 'Press any key to reboot', 13, 10, 0
 
 BootInfo.Drive		db ?
+
+include 'DCC Compatibility.inc'
+include	'DC Code.asm'
 
 assert	$ <= StackTop - StackSize

@@ -74,6 +74,7 @@ export VERSION_FILE
 
 HOST_SPECIFIC_MACROS	:= $(BUILDSYSTEM_ROOT)$(PATH_SEPARATOR)Host Specific Macros.mk
 FASMG_TOOLCHAIN			:= $(BUILDSYSTEM_ROOT)$(PATH_SEPARATOR)Flat Assembler G Toolchain.mk
+DCC_TOOLCHAIN			:= $(BUILDSYSTEM_ROOT)$(PATH_SEPARATOR)Deterministic C Compiler Toolchain.mk
 HOST_TOOLS				:= $(BUILDSYSTEM_ROOT)$(PATH_SEPARATOR)Host Tools.mk
 BOOTLOADER_MODULE		:= $(ABS_ROOT)$(PATH_SEPARATOR)Boot Loader$(PATH_SEPARATOR)Module.mk
 QUICK_EMULATOR_MODULE	:= $(BUILDSYSTEM_ROOT)$(PATH_SEPARATOR)Quick Emulator.mk
@@ -81,6 +82,7 @@ BOCHS_MODULE			:= $(BUILDSYSTEM_ROOT)$(PATH_SEPARATOR)Bochs.mk
 
 include $(call escape_path,$(HOST_SPECIFIC_MACROS))
 include $(call escape_path,$(FASMG_TOOLCHAIN))
+include $(call escape_path,$(DCC_TOOLCHAIN))
 include $(call escape_path,$(HOST_TOOLS))
 include $(call escape_path,$(BOOTLOADER_MODULE))
 
