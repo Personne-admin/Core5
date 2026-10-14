@@ -70,6 +70,14 @@ eVERSION_FILE	:= $(call encode_path,$(VERSION_FILE))
 
 export VERSION_FILE
 
+ifeq ($(BUILD_ID),release)
+    CONFIG  ?= Release
+else
+    CONFIG  ?= Debug
+endif
+
+export CONFIG
+
 
 
 HOST_SPECIFIC_MACROS	:= $(BUILDSYSTEM_ROOT)$(PATH_SEPARATOR)Host Specific Macros.mk
@@ -190,11 +198,18 @@ endif
 
 
 
-.PHONY: all build image floppy hdd bootloader clean version
+$(eCOMPDB_FILE): $(eCOMPDB_ENTRIES)
+	@$(call CMD_DCC_MERGE_COMPDB,$(COMPDB_FILE),$(eCOMPDB_ENTRIES))
+
+compdb: $(eCOMPDB_FILE)
+
+
+
+.PHONY: all build image floppy hdd bootloader compdb clean version
 
 all: build
 
-build: bootloader floppy hdd
+build: bootloader floppy hdd compdb
 
 bootloader: $(eBOOTLOADER_STAGE1) $(eBOOTLOADER_STAGE2)
 
