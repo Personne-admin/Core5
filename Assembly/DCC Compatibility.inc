@@ -34,3 +34,7 @@ macro o32? insn&
     db 66h
     insn
 end macro
+
+macro ud2
+    db 0fh, 0bh
+end macro

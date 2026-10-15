@@ -30,7 +30,6 @@ BOOTLOADER_STAGE2_DCC_FLAGS := \
 								-fbackend custom \
 								-target i8086-binary \
 								-mcmodel unreal \
-								-Os \
 								-fbase 0x0:$(BOOTLOADER_STAGE2_LOAD_ADDRESS) \
 								-fpartial-eval \
 								-fno-stack-protector \
@@ -44,7 +43,7 @@ BOOTLOADER_STAGE2_DCC_FLAGS := \
 ifeq ($(CONFIG),Debug)
 	BOOTLOADER_STAGE2_DCC_FLAGS += -fbounds-check -frestricted-check -J"using bool DEBUG = true;"
 else
-	BOOTLOADER_STAGE2_DCC_FLAGS += -J"using bool DEBUG = false;"
+	BOOTLOADER_STAGE2_DCC_FLAGS += -J"using bool DEBUG = false;" -O2
 endif
 
 ifeq ($(HOST),Linux)

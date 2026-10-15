@@ -18,11 +18,16 @@ Stage2.Start:
 	; VIDEO - SET VIDEO MODE
 	; AH = 00h
 	; AL = desired video mode (see #00010)
-	mov ax, 0x3
-	int 0x10
+	mov	ax, 0x3
+	int	0x10
 
-	mov	si, Message.Banner
-	call	Print
+	; VIDEO - SET TEXT-MODE CURSOR SHAPE
+	; AH = 01h
+	; CH = cursor start and options (see #00013)
+	; CL = bottom scan line containing cursor (bits 0-4)
+	mov	ah, 0x1
+	mov	ch, 0x3F
+	int	0x10
 
 	call	CheckCpu
 	call	EnableA20
@@ -63,6 +68,7 @@ Fatal:
 	mov	si, Message.PressKey
 	call	Print
 
+WaitReboot:
 	; KEYBOARD - GET KEYSTROKE
 	; AH = 00h
 	xor	ah, ah
@@ -70,7 +76,6 @@ Fatal:
 	; SYSTEM - BOOTSTRAP LOADER
 	int	0x19
 
-Message.Banner		db 'Core5 stage 2 loader', 13, 10, 0
 Message.Not386		db 'Boot error: a 386 or newer is required', 13, 10, 0
 Message.NoA20		db 'Boot error: cannot enable the A20 line', 13, 10, 0
 Message.PressKey	db 'Press any key to reboot', 13, 10, 0

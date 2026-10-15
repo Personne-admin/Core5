@@ -1,0 +1,71 @@
+//!!
+//!! Video Graphics Array
+//!! loader device driver for VGA
+//!! devices and rendering related code.
+//!!
+module Dev::VGA;
+
+public using u16 ^ DS VGA_MEMORY = DS: 0xB8000;
+
+using u8 WIDTH = 80;
+using u8 HEIGHT = 25;
+
+/// the state of the 80x25 video
+/// text mode device.
+public struct VGA {
+    u8 cursor_x;
+    u8 cursor_y;
+}
+
+public enum Color : u16 {
+    Blue = 0x1,
+    Green = 0x2,
+    Cyan = 0x3,
+    Red = 0x4,
+    Purple = 0x5,
+    Brown = 0x6,
+    Gray = 0x7,
+}
+
+public VGA screen() {
+    return {0, 0};
+}
+using public Dev::VGA = VGA;
+
+public void render(VGA* self, const char c, Color cr) {
+    if self.cursor_x == WIDTH || c == '\n' {
+        for x in self.cursor_x..WIDTH {
+            VGA_MEMORY[x + self.cursor_y * WIDTH] = 0;
+        }
+
+        self.cursor_x = 0;
+        self.cursor_y++;
+    }
+
+    if self.cursor_y == HEIGHT {
+        self.cursor_y = 0;
+    }
+
+    if c >= 32 as char && c <= 126 as char {
+        u16 word = c as u16 | cr as u16 << 8;
+        VGA_MEMORY[self.cursor_x + self.cursor_y * WIDTH] = word;
+
+        self.cursor_x++;
+    }
+}
+
+public void render(VGA* self, [] const char str, Color cr) {
+    for c in str {
+        self.render(c, cr);
+    }
+}
+
+public void render(VGA* self, const char c) {
+    self.render(c, Color::Gray);
+}
+
+public void render(VGA* self, [] const char str) {
+    for c in str {
+        self.render(c, Color::Gray);
+    }
+}

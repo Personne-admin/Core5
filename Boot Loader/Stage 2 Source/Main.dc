@@ -1,6 +1,11 @@
 module Main;
 
+import Dev::VGA;
+
 @nomangle
 public void loader_entry() {
+    Dev::VGA s = Dev::VGA::screen();
+    s.render("Hello World from unreal code!\n");
+
     for ;; {}
 }

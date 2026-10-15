@@ -1,0 +1,23 @@
+module assert;
+
+public import core::source_location;
+import Dev::VGA;
+
+@nomangle
+public extern void WaitReboot();
+
+public void __assert(
+    [] const char msg,
+    core::source_location::SourceLocation sl
+) {
+    Dev::VGA s = Dev::VGA::screen();
+    Dev::VGA::Color c = Dev::VGA::Color::Red;
+    s.render("-- LOADER PANIC --\n", c);
+    s.render(msg);
+    s.render(" in ");
+    s.render(sl.function);
+
+    WaitReboot();
+
+    for ;; {}
+}
