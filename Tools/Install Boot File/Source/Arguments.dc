@@ -141,7 +141,7 @@ public Problem parse(Options* o) {
 
 public void print_usage() {
     Platform::print_out(
-        "Usage: Install FAT Boot File -Image <image> -Source <binary> [options]\n"
+        "Usage: Install Boot File -Image <image> -Source <binary> [options]\n"
     );
     Platform::print_out("\n");
     Platform::print_out(

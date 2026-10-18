@@ -20,7 +20,7 @@ using Layout = Arguments::Layout;
 using FileHandle = Platform::FileHandle;
 using FileMode = Platform::FileMode;
 
-using [] const char TOOL = "Install FAT Boot File: ";
+using [] const char TOOL = "Install Boot File: ";
 using u64 SECTOR_BYTES = 512;
 
 public i32 main() {
