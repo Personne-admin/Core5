@@ -1,0 +1,40 @@
+    Boot Loader Architecture
+
+The Boot Loader architecture is split into two stages
+when booting all supported media (floppy disks and
+hard disks). The first stage, referred to internally as
+the stage 1 or stage 1 Boot Loader, is a single binary
+assembled with flat assembler g from `Boot Loader/Boot
+Sector.asm`. The resulting binary contains both of the
+boot paths and decides which to invoke at runtime by
+consulting the boot drive number passed in by the BIOS.
+
+On hard disk drives (HDDs) the stage 1 uses the Extended
+Read IBM/Microsoft INT 13h BIOS extension to read the
+second stage Boot Loader, otherwise referred to as stage 2,
+from the "gap" before the beginning of the lowest-addressed
+partition.
+
+On floppy disks, the stage 1 uses the standard Read Sectors
+into Memory INT 13h BIOS function to load the FAT12 filesystem
+information into memory, find the 0th root directory entry which
+must contain a file called BOOT.BIN--the second stage Boot Loader--
+and then proceeds to load it into memory.
+
+On failure of either path, the stage 1 outputs a "Boot error"
+message followed by a single-letter code which defines what
+has gone wrong.
+
+If the BIOS failed to read the drive after 3 attempts, D
+If root directory entry 0 isn't the correct BOOT.BIN, S
+If a broken / corrupted FAT chain is encountered, F
+If the Cyclic Redundancy Check of the stage 2 fails, C
+
+For every BIOS read failure (no matter if the final fault
+is a D or any other code) the BIOS status is recorded and
+the last failure error is printed on failure.
+
+The stage 1 is also heavily size constrained since the same
+binary must still contain the BIOS Parameter Block and the
+Extended Boot Record as well as the MBR metadata from offset
+0x1B8 onwards, regardless of the medium it is installed to.
