@@ -63,3 +63,41 @@ target entry, querying the parent or name of a resolved handle reflects
 the canonical location and identity of the target itself, rather than
 the link through which it was reached. To obtain the parent or name of
 the link entry, the link must be opened explicitly via macrooperations.
+
+    Core5 Truth on disk format
+
+The C5T file format has been designed with early boot interactions in mind.
+
+All structures and payloads are padded to be aligned to a word boundary. All
+references to other structures use 32-bit flat file offsets from the start of
+the zeroth byte of the file, with the exception of string table offset which
+are relative to the string pool offset located in the file header. All relative
+children are pre-sorted by a 32-bit FNV-1a hash alongside alphabetical sorting
+in case of conflicts.
+
+The file format begins with a 32-byte C5T file header. The first four bytes of which
+are the file magic, little endian stored "C5T\x01". The next word following the magic
+are the flags, followed by the offset of the entry tree root in the file followed by the
+total size of the file in bytes. Next lie the string pool start offset and the string
+pool size, both word sized. Finally, the header ends with a cyclic redundancy check
+checksum taken with the field as 0 and a reserved word.
+
+Both indexed and relative child tables use a universal child descriptor (UCD) packed
+to four words. The first word is the offset of the name in the string pool, with all
+bits set of indexed children. The second word is the FNV-1a hash of the name for quick
+binary search. The third word is split, in little-endian order to the type in the first
+byte, the flags in the second byte and the inline length forming a halfword of the third
+and fourth byte, used for small strings/arrays and 0 when unused. The last word of the UCD
+is a union storing the Int, UInt or Bool value payloads directly, the file offset of the
+entry for subentries and a file offset to the payload for Int64, UInt64, String, Bytes,
+Words and Link.
+
+We reiterate, if the length of a String, Bytes or Words payload does not fit into a halfword,
+the first word of the payload of said values is the length instead. In these cases, and only
+in these cases the length of the 6th halfword of the UCD may be 0.
+
+If a subentry is an entry it (and the C5T file header's entry tree root) points to a 20-byte
+entry/subentry header. The first word of this header is the file offset of the parent entry
+header. The second and third words store the number of indexed children and a file offset to
+a contiguous array of UCDs respectively. The last two words store the number of relative children
+and file offset of a sorted contiguous array of UCDs in the same order as the indexed entries.
