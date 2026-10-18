@@ -1,0 +1,65 @@
+Core 5 Truth
+
+Core 5 Truth, also referred to as the truth or the source of truth,
+is the unified configuration and object namespace mechanism used by
+the Core5 operating system.
+
+Truth is represented as a tree of entries, each with two groups of
+children, indexed children and relative children. Both types of
+children can be of different types, subentries, values and links
+however their way of access depends solely on whether they are
+indexed or relative.
+
+A subentry is in every way functionally identical to an entry, those
+entries which are not subentries are called root entries and they are
+the parents of all other entries. The parent is an inverse relationship
+to a child.
+
+Values are special leaf "entries" which do not have any indexed or relative
+children. Instead they hold one instance of a type. Available value types
+must be one of the following:
+
+Int: 32 bit 2s complement signed integer value
+UInt: 32 bit unsigned integer value
+Int64: 64 bit 2s complement signed integer value
+UInt64: 64 bit unsigned integer value
+String: ASCII string
+Bytes: An array of arbitrary sized raw bytes
+Words: An array of arbitrary sized 4-byte memory aligned words
+Bool: Boolean value capable of holding true or false
+
+Values are only entries in spirit, as they may be embedded inside their parent
+entries, handles to entries themselves may synthesize dynamic handles for their
+specific use cases.
+
+Link entries come in two flavors, volatile and persistent links.
+
+Volatile links point directly to the identity (handle) of an entry
+that they are set up to track, across index shifts and path changes.
+As such, they can not be saved to a persistent backing storage, such
+as the hard disk.
+
+Persistent links are evaluated dynamically when opened by the truth
+subsystem. They contain relative or absolute paths to the target truth
+entry and as such may "dangle" if the target does no longer or not yet
+exist.
+
+Links itself may be accessed, inspected and mutated through macrooperations.
+When the macrooperation flag is not specified, the existance of links is fully
+transparent to any subsystem callers and links appear as their target entries.
+
+The system of accessing children is through their groups.
+
+Indexed children bear no names, and are only accessible by their index,
+all of the indexed children of any given entry can be iterated.
+
+Relative children can not be accessed by a stable index, instead they are indexed
+by a human legible name, similar to the String value type. All of the relative
+children of any given entry can be iterated, however no reusable indicies may be
+produced. The name of a relative entry can be obtained from its handle.
+
+Because transparent link resolution yields a handle directly to the
+target entry, querying the parent or name of a resolved handle reflects
+the canonical location and identity of the target itself, rather than
+the link through which it was reached. To obtain the parent or name of
+the link entry, the link must be opened explicitly via macrooperations.
