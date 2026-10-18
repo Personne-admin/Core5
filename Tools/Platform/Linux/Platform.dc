@@ -1,0 +1,409 @@
+//!!
+//!! Platform abstraction layer for operating systems
+//!! using the Linux kernel.
+//!!
+module Platform;
+
+import Main;
+
+public enum IoError : u8 {
+    InvalidArgument,
+    OpenFailed,
+    SeekFailed,
+    ReadFailed,
+    UnexpectedEof,
+    WriteFailed,
+}
+
+public enum Result(T, E) {
+    Ok(T),
+    Err(E),
+}
+
+public bool is_ok(T, E)(const Result(T, E)* self) {
+    return match *self {
+        Result::Ok(_) => true,
+        Result::Err(_) => false,
+    };
+}
+
+public T unwrap(T, E)(Result(T, E) self) {
+    return match self {
+        Result::Ok(val) => val,
+        Result::Err(_) => {
+            exit_process(1);
+            0 as T
+        },
+    };
+}
+
+public Result(T, E) unwrap_err(T, E)(Result(T, E) self) {
+    return self;
+}
+
+@nominal
+public using FileHandle = i32;
+
+public using FileHandle INVALID_HANDLE = -1 as FileHandle;
+
+public enum FileMode : u8 {
+    ReadOnly = 0,
+    ReadWrite = 1,
+    CreateTrunc = 2,
+}
+
+public usize get_arg_count() {
+    return g_argc;
+}
+
+public [] const char get_arg(usize index) {
+    if index >= g_argc {
+        return "";
+    }
+
+    const char* cstr = g_argv[index];
+    if cstr == null {
+        return "";
+    }
+
+    return cstr_to_slice(cstr);
+}
+
+public void exit_process(i32 status) {
+    sys_exit(status);
+}
+
+public void print_out([] const char msg) {
+    if msg.len != 0 {
+        sys_write(STDOUT_FILENO, msg as [] const u8);
+    }
+}
+
+public void print_error([] const char msg) {
+    if msg.len != 0 {
+        sys_write(STDERR_FILENO, msg as [] const u8);
+    }
+}
+
+public Result(FileHandle, IoError) open_file([] const char path, FileMode mode) {
+    if path.len == 0 || path.len >= PATH_BUFFER_SIZE {
+        return Result(FileHandle, IoError)::Err(IoError::InvalidArgument);
+    }
+
+    char[PATH_BUFFER_SIZE] path_buf;
+    for i in 0..path.len {
+        path_buf[i] = path[i];
+    }
+    path_buf[path.len] = '\0';
+
+    i32 flags = match mode {
+        FileMode::ReadOnly => O_RDONLY,
+        FileMode::ReadWrite => O_RDWR,
+        FileMode::CreateTrunc => O_RDWR
+            | O_CREAT
+            | O_TRUNC,
+    };
+
+    i32 perms = if mode == FileMode::CreateTrunc {
+        0o644
+    } else {
+        0
+    };
+
+    i64 fd = sys_open(&path_buf[0], flags, perms);
+    if fd < 0 {
+        return Result(FileHandle, IoError)::Err(IoError::OpenFailed);
+    }
+
+    return Result(FileHandle, IoError)::Ok((fd as i32) as FileHandle);
+}
+
+public void close_file(FileHandle handle) {
+    i32 raw = handle as i32;
+    if raw >= 0 {
+        sys_close(raw);
+    }
+}
+
+public Result(u64, IoError) get_file_size(FileHandle handle) {
+    i32 raw = handle as i32;
+    if raw < 0 {
+        return Result(u64, IoError)::Err(IoError::InvalidArgument);
+    }
+
+    i64 end_pos = sys_lseek(raw, 0, SEEK_END);
+    if end_pos < 0 {
+        return Result(u64, IoError)::Err(IoError::SeekFailed);
+    }
+
+    return Result(u64, IoError)::Ok(end_pos as u64);
+}
+
+public Result(usize, IoError) read_at(
+    FileHandle handle,
+    u64 offset,
+    [] u8 buffer
+) {
+    i32 raw = handle as i32;
+    if raw < 0 {
+        return Result(usize, IoError)::Err(IoError::InvalidArgument);
+    }
+    if buffer.len == 0 {
+        return Result(usize, IoError)::Ok(0);
+    }
+
+    if sys_lseek(raw, offset as i64, SEEK_SET) < 0 {
+        return Result(usize, IoError)::Err(IoError::SeekFailed);
+    }
+
+    usize total_read = 0;
+    while total_read < buffer.len {
+        i64 res = sys_read_raw(
+            raw,
+            buffer.ptr + total_read,
+            buffer.len - total_read
+        );
+        if res < 0 {
+            return Result(usize, IoError)::Err(IoError::ReadFailed);
+        }
+        if res == 0 {
+            return Result(usize, IoError)::Err(IoError::UnexpectedEof);
+        }
+        total_read += res as usize;
+    }
+
+    return Result(usize, IoError)::Ok(total_read);
+}
+
+public Result(usize, IoError) write_at(
+    FileHandle handle,
+    u64 offset,
+    [] const u8 buffer
+) {
+    i32 raw = handle as i32;
+    if raw < 0 {
+        return Result(usize, IoError)::Err(IoError::InvalidArgument);
+    }
+    if buffer.len == 0 {
+        return Result(usize, IoError)::Ok(0);
+    }
+
+    if sys_lseek(raw, offset as i64, SEEK_SET) < 0 {
+        return Result(usize, IoError)::Err(IoError::SeekFailed);
+    }
+
+    usize total_written = 0;
+    while total_written < buffer.len {
+        i64 res = sys_write_raw(
+            raw,
+            buffer.ptr + total_written,
+            buffer.len - total_written
+        );
+        if res <= 0 {
+            return Result(usize, IoError)::Err(IoError::WriteFailed);
+        }
+        total_written += res as usize;
+    }
+
+    return Result(usize, IoError)::Ok(total_written);
+}
+
+using usize PATH_BUFFER_SIZE = 4096;
+
+using i32 STDIN_FILENO = 0;
+using i32 STDOUT_FILENO = 1;
+using i32 STDERR_FILENO = 2;
+
+using i32 O_RDONLY = 0;
+using i32 O_WRONLY = 1;
+using i32 O_RDWR = 2;
+using i32 O_CREAT = 0o100;
+using i32 O_TRUNC = 0o1000;
+
+using i32 SEEK_SET = 0;
+using i32 SEEK_CUR = 1;
+using i32 SEEK_END = 2;
+
+using i64 SYS_READ = 0;
+using i64 SYS_WRITE = 1;
+using i64 SYS_OPEN = 2;
+using i64 SYS_CLOSE = 3;
+using i64 SYS_LSEEK = 8;
+using i64 SYS_EXIT = 60;
+
+usize g_argc = 0;
+const char** g_argv = null;
+
+[] const char cstr_to_slice(const char* s) {
+    usize len = 0;
+    while s[len] != '\0' {
+        len++;
+    }
+
+    [] const char slice;
+    slice.ptr = s;
+    slice.len = len;
+    return slice;
+}
+
+asm @[intel, arch("x86_64")] {
+    ".text\n.global _start\n_start:\nxor rbp, rbp\nmov rdi, [rsp]\nlea rsi, [rsp + 8]\nand rsp, -16\ncall %{__platform_init}\n"
+};
+
+@nomangle
+public void __platform_init(usize argc, const char** argv) {
+    g_argc = argc;
+    g_argv = argv;
+
+    i32 status = Main::main();
+    sys_exit(status);
+}
+
+i64 sys_read_raw(i32 fd, u8* buf, usize count) {
+    i64 ret = SYS_READ;
+    asm @[
+        intel,
+        arch("x86_64"),
+        inout(num = ret in rax),
+        inputs(f in edi = fd, b in rsi = buf, c in rdx = count),
+        clobbers(rcx, r11, memory, cc)
+    ] {
+        "syscall"
+    };
+    return ret;
+}
+
+i64 sys_write_raw(i32 fd, const u8* buf, usize count) {
+    i64 ret = SYS_WRITE;
+    asm @[
+        intel,
+        arch("x86_64"),
+        inout(num = ret in rax),
+        inputs(f in edi = fd, b in rsi = buf, c in rdx = count),
+        clobbers(rcx, r11, memory, cc)
+    ] {
+        "syscall"
+    };
+    return ret;
+}
+
+i64 sys_write(i32 fd, [] const u8 data) {
+    return sys_write_raw(fd, data.ptr, data.len);
+}
+
+i64 sys_open(const char* pathname, i32 flags, i32 mode) {
+    i64 ret = SYS_OPEN;
+    asm @[
+        intel,
+        arch("x86_64"),
+        inout(num = ret in rax),
+        inputs(p in rdi = pathname, fl in esi = flags, m in edx = mode),
+        clobbers(rcx, r11, memory, cc)
+    ] {
+        "syscall"
+    };
+    return ret;
+}
+
+i64 sys_close(i32 fd) {
+    i64 ret = SYS_CLOSE;
+    asm @[
+        intel,
+        arch("x86_64"),
+        inout(num = ret in rax),
+        inputs(f in edi = fd),
+        clobbers(rcx, r11, memory, cc)
+    ] {
+        "syscall"
+    };
+    return ret;
+}
+
+i64 sys_lseek(i32 fd, i64 offset, i32 whence) {
+    i64 ret = SYS_LSEEK;
+    asm @[
+        intel,
+        arch("x86_64"),
+        inout(num = ret in rax),
+        inputs(f in edi = fd, off in rsi = offset, w in edx = whence),
+        clobbers(rcx, r11, memory, cc)
+    ] {
+        "syscall"
+    };
+    return ret;
+}
+
+void sys_exit(i32 status) {
+    i64 nr = SYS_EXIT;
+    asm @[
+        intel,
+        arch("x86_64"),
+        inputs(num in rax = nr, code in edi = status),
+        clobbers(rcx, r11, memory, cc)
+    ] {
+        "syscall\nud2"
+    };
+    while true {}
+}
+
+@nomangle
+public void* memcpy(void* dest, const void* src, usize n) {
+    u8* d = dest as u8*;
+    const u8* s = src as const u8*;
+
+    for usize i = 0; i < n; i++ {
+        d[i] = s[i];
+    }
+
+    return dest;
+}
+
+@nomangle
+public void* memmove(void* dest, const void* src, usize n) {
+    u8* d = dest as u8*;
+    const u8* s = src as const u8*;
+
+    if (dest as usize) == (src as usize) || n == 0 {
+        return dest;
+    }
+
+    if (dest as usize) < (src as usize) {
+        for usize i = 0; i < n; i++ {
+            d[i] = s[i];
+        }
+    } else {
+        usize i = n;
+        while i > 0 {
+            i--;
+            d[i] = s[i];
+        }
+    }
+
+    return dest;
+}
+
+@nomangle
+public void* memset(void* dest, i32 value, usize n) {
+    u8* d = dest as u8*;
+    u8 byte = value as u8;
+
+    for usize i = 0; i < n; i++ {
+        d[i] = byte;
+    }
+
+    return dest;
+}
+
+@nomangle
+public i32 memcmp(const void* a, const void* b, usize n) {
+    const u8* p = a as const u8*;
+    const u8* q = b as const u8*;
+
+    for usize i = 0; i < n; i++ {
+        if p[i] != q[i] {
+            return (p[i] as i32) - (q[i] as i32);
+        }
+    }
+
+    return 0;
+}

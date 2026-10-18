@@ -1,0 +1,348 @@
+//!
+//!! Shared helpers for the tool
+//!!
+module Support;
+
+public import Platform;
+
+using FileHandle = Platform::FileHandle;
+using FileMode = Platform::FileMode;
+
+//!
+//! Errors
+//!
+
+/// every way an installation can fail
+public enum Error : u8 {
+    None,
+    SourceOpen,
+    SourceRead,
+    SourceEmpty,
+    SourceTooLarge,
+    ImageOpen,
+    ImageRead,
+    ImageWrite,
+    ImageTruncated,
+    NoSignature,
+    UnknownLayout,
+    InvalidBootSector,
+    NotFat12,
+    UnsupportedGeometry,
+    InvalidName,
+    NameInUse,
+    DirectoryFull,
+    DiskFull,
+    NoPartition,
+    ProtectiveMbr,
+    GapTooSmall,
+}
+
+public bool is_ok(Error self) {
+    return self == Error::None;
+}
+
+public void unwrap(Error self) {}
+
+public Error unwrap_err(Error self) {
+    return self;
+}
+
+public [] const char describe(Error e) {
+    return match e {
+        Error::None => "success",
+        Error::SourceOpen => "cannot open source file",
+        Error::SourceRead => "cannot read source file",
+        Error::SourceEmpty => "source file is empty",
+        Error::SourceTooLarge => "source file is too large for the target",
+        Error::ImageOpen => "cannot open image for reading and writing",
+        Error::ImageRead => "cannot read image",
+        Error::ImageWrite => "cannot write image",
+        Error::ImageTruncated => "image is smaller than its boot sector describes",
+        Error::NoSignature => "image has no 0xAA55 boot signature",
+        Error::UnknownLayout => "image is neither a FAT12 volume nor an MBR disk with a FAT32 partition",
+        Error::InvalidBootSector => "FAT boot sector parameters are invalid",
+        Error::NotFat12 => "volume is not FAT12",
+        Error::UnsupportedGeometry => "FAT12 geometry exceeds this tool's limits",
+        Error::InvalidName => "name is not a valid 8.3 file name",
+        Error::NameInUse => "an entry with that name already exists",
+        Error::DirectoryFull => "FAT12 root directory has no free entry",
+        Error::DiskFull => "FAT12 volume has insufficient free clusters",
+        Error::NoPartition => "MBR has no partition to bound the boot gap",
+        Error::ProtectiveMbr => "disk is GPT, the gap holds the GPT header",
+        Error::GapTooSmall => "stage2 does not fit before the first partition",
+    };
+}
+
+//!
+//! Results
+//!
+
+/// what an installation did, for the summary line
+public struct Report {
+    bool fat12;
+    bool replaced;
+    u64 bytes;
+
+    /// clusters (FAT12) or sectors (gap) occupied by the file
+    u64 units;
+    u64 first_cluster;
+    u64 gap_sectors;
+    u64 usable_sectors;
+}
+
+public void clear(Report* self) {
+    self.fat12 = false;
+    self.replaced = false;
+    self.bytes = 0;
+    self.units = 0;
+    self.first_cluster = 0;
+    self.gap_sectors = 0;
+    self.usable_sectors = 0;
+}
+
+//!
+//! Bytes
+//!
+
+/// a slice over `len` bytes starting at `ptr`
+public [] u8 bytes(u8* ptr, usize len) {
+    [] u8 result;
+    result.ptr = ptr;
+    result.len = len;
+    return result;
+}
+
+/// the `len` bytes of `whole` starting at `start`
+public [] u8 view([] u8 whole, usize start, usize len) {
+    return bytes(whole.ptr + start, len);
+}
+
+public void zero([] u8 target) {
+    for i in 0..target.len {
+        target[i] = 0;
+    }
+}
+
+public void copy([] u8 target, [] const u8 source) {
+    for i in 0..source.len {
+        target[i] = source[i];
+    }
+}
+
+public u16 get_u16([] const u8 data, usize at) {
+    return (data[at] as u16) | ((data[at + 1] as u16) << 8);
+}
+
+public u32 get_u32([] const u8 data, usize at) {
+    return (get_u16(data, at) as u32) | ((get_u16(data, at + 2) as u32) << 16);
+}
+
+public void put_u16([] u8 data, usize at, u16 value) {
+    data[at] = (value & 0xFF) as u8;
+    data[at + 1] = (value >> 8) as u8;
+}
+
+public void put_u32([] u8 data, usize at, u32 value) {
+    put_u16(data, at, (value & 0xFFFF) as u16);
+    put_u16(data, at + 2, (value >> 16) as u16);
+}
+
+//!
+//! Files
+//!
+
+public Error open_file(
+    [] const char path,
+    FileMode mode,
+    FileHandle* out,
+    Error failure
+) {
+    return match Platform::open_file(path, mode) {
+        Platform::Result::Ok(handle) => {
+            *out = handle;
+            Error::None
+        },
+        Platform::Result::Err(_) => failure,
+    };
+}
+
+public Error file_size(FileHandle file, u64* out, Error failure) {
+    return match Platform::get_file_size(file) {
+        Platform::Result::Ok(size) => {
+            *out = size;
+            Error::None
+        },
+        Platform::Result::Err(_) => failure,
+    };
+}
+
+/// fills `buffer` completely from `offset`, or fails with `failure`
+public Error read_exact(
+    FileHandle file,
+    u64 offset,
+    [] u8 buffer,
+    Error failure
+) {
+    return match Platform::read_at(file, offset, buffer) {
+        Platform::Result::Ok(_) => Error::None,
+        Platform::Result::Err(_) => failure,
+    };
+}
+
+/// writes all of `buffer` at `offset`, or fails with `failure`
+public Error write_all(
+    FileHandle file,
+    u64 offset,
+    [] const u8 buffer,
+    Error failure
+) {
+    return match Platform::write_at(file, offset, buffer) {
+        Platform::Result::Ok(_) => Error::None,
+        Platform::Result::Err(_) => failure,
+    };
+}
+
+//!
+//! Text
+//!
+
+public char to_upper(char c) {
+    if c >= 'a' && c <= 'z' {
+        return ((c as u8) - 32) as char;
+    }
+
+    return c;
+}
+
+public bool equals_ignore_case([] const char a, [] const char b) {
+    if a.len != b.len {
+        return false;
+    }
+
+    for i in 0..a.len {
+        if to_upper(a[i]) != to_upper(b[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+using usize TEXT_CAPACITY = 1024;
+
+/// fixed-capacity message builder
+public struct Text {
+    char[TEXT_CAPACITY] data;
+    usize len;
+}
+
+public void reset(Text* self) {
+    self.len = 0;
+}
+
+public void append_char(Text* self, char c) {
+    if self.len < TEXT_CAPACITY {
+        self.data[self.len] = c;
+        self.len++;
+    }
+}
+
+public void append(Text* self, [] const char s) {
+    for i in 0..s.len {
+        append_char(self, s[i]);
+    }
+}
+
+public void append_u64(Text* self, u64 value) {
+    char[20] digits;
+    usize count = 0;
+    u64 rest = value;
+
+    do {
+        digits[count] = (((rest % 10) as u8) + 0x30) as char;
+        count++;
+        rest /= 10;
+    }
+    while rest != 0;
+
+    while count > 0 {
+        count--;
+        append_char(self, digits[count]);
+    }
+}
+
+public [] const char contents(const Text* self) {
+    [] const char result;
+    result.ptr = &self.data[0];
+    result.len = self.len;
+    return result;
+}
+
+//!
+//! 8.3 names
+//!
+
+public struct ShortName {
+    u8[11] bytes;
+}
+
+/// the on-disk byte for `c`, or 0 when `c` cannot appear in a short name
+u8 short_name_byte(char c) {
+    u8 b = to_upper(c) as u8;
+    if b <= 0x20 || b >= 0x7F {
+        return 0;
+    }
+
+    return match b {
+        0x22 | 0x2A | 0x2B | 0x2C | 0x2E | 0x2F | 0x3A | 0x3B | 0x3C | 0x3D | 0x3E | 0x3F | 0x5B | 0x5C | 0x5D | 0x7C => 0,
+        _ => b,
+    };
+}
+
+/// parses `BASE` or `BASE.EXT` (1-8 and 0-3 characters) into `out`
+public Error parse_short_name([] const char text, ShortName* out) {
+    for usize i = 0; i < 11; i++ {
+        out.bytes[i] = 0x20;
+    }
+
+    usize dot = text.len;
+    usize dots = 0;
+    for i in 0..text.len {
+        if text[i] == '.' {
+            dot = i;
+            dots++;
+        }
+    }
+
+    if dots > 1 || dot == 0 || dot > 8 {
+        return Error::InvalidName;
+    }
+
+    usize extension = 0;
+    if dots == 1 {
+        extension = text.len - dot - 1;
+        if extension == 0 || extension > 3 {
+            return Error::InvalidName;
+        }
+    }
+
+    for i in 0..dot {
+        u8 b = short_name_byte(text[i]);
+        if b == 0 {
+            return Error::InvalidName;
+        }
+
+        out.bytes[i] = b;
+    }
+
+    for i in 0..extension {
+        u8 b = short_name_byte(text[dot + 1 + i]);
+        if b == 0 {
+            return Error::InvalidName;
+        }
+
+        out.bytes[8 + i] = b;
+    }
+
+    return Error::None;
+}

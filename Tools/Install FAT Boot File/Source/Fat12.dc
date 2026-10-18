@@ -1,0 +1,438 @@
+//!!
+//!! FAT12 installation module
+//!!
+module Fat12;
+
+import Platform;
+import Support;
+
+public using Error = Support::Error;
+public using Report = Support::Report;
+public using ShortName = Support::ShortName;
+using FileHandle = Platform::FileHandle;
+
+//!
+//! Limits and on-disk constants
+//!
+
+/// FAT12 addresses fewer than 4085 data clusters
+using u64 MAX_CLUSTERS = 4084;
+
+/// bytes of FAT needed to address MAX_CLUSTERS + 2 entries, rounded up
+using usize FAT_BUFFER_BYTES = 6144;
+
+/// clusters larger than this are not staged in memory
+using usize CLUSTER_BUFFER_BYTES = 65536;
+
+using u64 MAX_CLUSTER_BYTES = 65536;
+
+/// root directories with more entries than this are rejected
+using u64 MAX_ROOT_ENTRIES = 4096;
+
+using usize ROOT_BUFFER_BYTES = 131072;
+
+using usize ENTRY_BYTES = 32;
+using u8 ENTRY_END = 0x00;
+using u8 ENTRY_DELETED = 0xE5;
+using u8 ATTR_VOLUME_LABEL = 0x08;
+using u8 ATTR_DIRECTORY = 0x10;
+using u8 ATTR_LONG_NAME = 0x0F;
+
+/// read-only, hidden, system and archive
+using u8 BOOT_ATTRIBUTES = 0x27;
+
+/// 1980-01-01; TODO replace with real clock'in
+using u16 EPOCH_DATE = 0x0021;
+using u16 END_OF_CHAIN = 0xFFF;
+
+u8[FAT_BUFFER_BYTES] g_fat;
+u8[ROOT_BUFFER_BYTES] g_root;
+u8[CLUSTER_BUFFER_BYTES] g_cluster;
+u16[MAX_CLUSTERS] g_chain;
+
+//!
+//! Geometry
+//!
+
+/// byte offsets and sizes derived from the BPB
+struct Geometry {
+    u64 bytes_per_sector;
+    u64 bytes_per_cluster;
+    u64 fat_offset;
+
+    /// size of one FAT copy
+    u64 fat_bytes;
+    u64 fat_count;
+
+    /// leading bytes of each FAT that address the data area
+    u64 fat_used;
+    u64 root_offset;
+    u64 root_entries;
+    u64 data_offset;
+    u64 cluster_count;
+}
+
+bool is_power_of_two(u64 value) {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+/// a cheap structural test for a FAT12/16 boot sector to pick the layout
+public bool looks_like_bpb([] const u8 boot) {
+    bool jump = (boot[0] == 0xEB && boot[2] == 0x90) || boot[0] == 0xE9;
+
+    u64 bytes_per_sector = Support::get_u16(boot, 11) as u64;
+    return jump && bytes_per_sector >= 512 && is_power_of_two(bytes_per_sector) && is_power_of_two(
+        boot[13] as u64
+    ) && Support::get_u16(
+        boot,
+        14
+    ) != 0 && boot[16] != 0 && Support::get_u16(
+        boot,
+        17
+    ) != 0;
+}
+
+Error read_geometry([] const u8 boot, u64 image_size, Geometry* g) {
+    u64 bytes_per_sector = Support::get_u16(boot, 11) as u64;
+    if bytes_per_sector < 512 || !is_power_of_two(bytes_per_sector) {
+        return Error::InvalidBootSector;
+    }
+
+    u64 sectors_per_cluster = boot[13] as u64;
+    if !is_power_of_two(sectors_per_cluster) {
+        return Error::InvalidBootSector;
+    }
+
+    u64 reserved = Support::get_u16(boot, 14) as u64;
+    u64 fat_count = boot[16] as u64;
+    if reserved == 0 || fat_count == 0 {
+        return Error::InvalidBootSector;
+    }
+
+    u64 root_entries = Support::get_u16(boot, 17) as u64;
+    u64 sectors_per_fat = Support::get_u16(boot, 22) as u64;
+    if root_entries == 0 || sectors_per_fat == 0 {
+        return Error::NotFat12;
+    }
+
+    u64 total_sectors = Support::get_u16(boot, 19) as u64;
+    if total_sectors == 0 {
+        total_sectors = Support::get_u32(boot, 32) as u64;
+    }
+    if total_sectors == 0 {
+        return Error::InvalidBootSector;
+    }
+
+    g.bytes_per_sector = bytes_per_sector;
+    g.bytes_per_cluster = bytes_per_sector * sectors_per_cluster;
+    g.fat_count = fat_count;
+    g.fat_bytes = sectors_per_fat * bytes_per_sector;
+    g.fat_offset = reserved * bytes_per_sector;
+    g.root_entries = root_entries;
+    g.root_offset = g.fat_offset + fat_count * g.fat_bytes;
+
+    u64 root_bytes = root_entries * (ENTRY_BYTES as u64);
+    u64 root_sectors = (root_bytes + bytes_per_sector - 1) / bytes_per_sector;
+    g.data_offset = g.root_offset + root_sectors * bytes_per_sector;
+
+    u64 total_bytes = total_sectors * bytes_per_sector;
+    if total_bytes > image_size {
+        return Error::ImageTruncated;
+    }
+
+    if g.data_offset >= total_bytes {
+        return Error::InvalidBootSector;
+    }
+
+    g.cluster_count = (total_bytes - g.data_offset) / g.bytes_per_cluster;
+    if g.cluster_count == 0 {
+        return Error::InvalidBootSector;
+    }
+
+    if g.cluster_count > MAX_CLUSTERS {
+        return Error::NotFat12;
+    }
+
+    // 1.5 bytes for each data cluster plus the two reserved entries
+    g.fat_used = ((g.cluster_count + 2) * 3 + 1) / 2;
+    if g.fat_used > g.fat_bytes {
+        return Error::InvalidBootSector;
+    }
+
+    if g.bytes_per_cluster > MAX_CLUSTER_BYTES
+        || root_entries > MAX_ROOT_ENTRIES
+    {
+        return Error::UnsupportedGeometry;
+    }
+
+    return Error::None;
+}
+
+//!
+//! File allocation table
+//!
+
+u16 fat_get([] const u8 fat, u64 cluster) {
+    usize at = (cluster + cluster / 2) as usize;
+    u16 pair = Support::get_u16(fat, at);
+
+    return if (cluster & 1) == 0 {
+        pair & 0xFFF
+    } else {
+        pair >> 4
+    };
+}
+
+/// entries share a byte with their neighbour, so read-modify-write it
+void fat_set([] u8 fat, u64 cluster, u16 value) {
+    usize at = (cluster + cluster / 2) as usize;
+
+    u16 pair = Support::get_u16(fat, at);
+    u16 entry = value & 0xFFF;
+
+    if (cluster & 1) == 0 {
+        pair = (pair & 0xF000) | entry;
+    } else {
+        pair = (pair & 0x000F) | (entry << 4);
+    }
+
+    Support::put_u16(fat, at, pair);
+}
+
+bool is_data_cluster(const Geometry* g, u64 cluster) {
+    return cluster >= 2 && cluster <= g.cluster_count + 1;
+}
+
+/// releases the chain starting at `first`
+void free_chain([] u8 fat, const Geometry* g, u64 first) {
+    u64 cluster = first;
+    u64 steps = 0;
+
+    while is_data_cluster(g, cluster) && steps < g.cluster_count {
+        u64 next = fat_get(fat, cluster) as u64;
+        fat_set(fat, cluster, 0);
+        cluster = next;
+        steps++;
+    }
+}
+
+//!
+//! Root directory
+//!
+
+[] u8 entry([] u8 root, usize index) {
+    return Support::view(root, index * ENTRY_BYTES, ENTRY_BYTES);
+}
+
+bool name_matches([] const u8 dir_entry, const ShortName* name) {
+    for usize i = 0; i < 11; i++ {
+        if dir_entry[i] != name.bytes[i] {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/// index of the live entry named `name`, or `count` when there is none
+usize find_entry(
+    [] u8 root,
+    usize count,
+    const ShortName* name,
+    bool* is_directory
+) {
+    *is_directory = false;
+
+    for usize i = 0; i < count; i++ {
+        [] u8 e = entry(root, i);
+        if e[0] == ENTRY_END {
+            break;
+        }
+
+        u8 attributes = e[11];
+        if e[0] == ENTRY_DELETED
+            || attributes == ATTR_LONG_NAME
+            || (attributes & ATTR_VOLUME_LABEL) != 0
+        {
+            continue;
+        }
+
+        if name_matches(e, name) {
+            *is_directory = (attributes & ATTR_DIRECTORY) != 0;
+            return i;
+        }
+    }
+
+    return count;
+}
+
+/// index of the first free or deleted entry, or `count` when full
+usize find_free([] u8 root, usize count) {
+    for usize i = 0; i < count; i++ {
+        u8 first = root[i * ENTRY_BYTES];
+        if first == ENTRY_END || first == ENTRY_DELETED {
+            return i;
+        }
+    }
+
+    return count;
+}
+
+/// deletes the entry at `index` and any long-name entries in front of it
+void delete_entry([] u8 root, usize index) {
+    [] u8 target = entry(root, index);
+    target[0] = ENTRY_DELETED;
+
+    usize i = index;
+    while i > 0 {
+        [] u8 previous = entry(root, i - 1);
+        if previous[11] != ATTR_LONG_NAME || previous[0] == ENTRY_DELETED {
+            break;
+        }
+
+        previous[0] = ENTRY_DELETED;
+        i--;
+    }
+}
+
+/// moves entries 0..slot-1 to 1..slot, overwriting `slot`
+void open_first_slot([] u8 root, usize slot) {
+    for usize i = slot; i > 0; i-- {
+        Support::copy(entry(root, i), entry(root, i - 1));
+    }
+}
+
+void fill_entry([] u8 e, const ShortName* name, u64 first_cluster, u64 size) {
+    Support::zero(e);
+    for usize i = 0; i < 11; i++ {
+        e[i] = name.bytes[i];
+    }
+
+    e[11] = BOOT_ATTRIBUTES;
+    Support::put_u16(e, 16, EPOCH_DATE);
+    Support::put_u16(e, 18, EPOCH_DATE);
+    Support::put_u16(e, 24, EPOCH_DATE);
+    Support::put_u16(e, 26, first_cluster as u16);
+    Support::put_u32(e, 28, size as u32);
+}
+
+//!
+//! Installation
+//!
+
+/// installs `source` as root entry 0 of the FAT12 volume in `image`
+public Error install(
+    FileHandle image,
+    u64 image_size,
+    [] const u8 boot,
+    FileHandle source,
+    u64 source_size,
+    const ShortName* name,
+    bool replace,
+    Report* report
+) {
+    Geometry g;
+    read_geometry(boot, image_size, &g) ?;
+
+    report.fat12 = true;
+    report.bytes = source_size;
+
+    // directory entries hold a 32-bit size
+    if source_size > 0xFFFFFFFF {
+        return Error::SourceTooLarge;
+    }
+
+    [] u8 fat = Support::bytes(&g_fat[0], g.fat_used as usize);
+    Support::read_exact(image, g.fat_offset, fat, Error::ImageRead) ?;
+
+    usize root_count = g.root_entries as usize;
+    [] u8 root = Support::bytes(&g_root[0], root_count * ENTRY_BYTES);
+    Support::read_exact(image, g.root_offset, root, Error::ImageRead) ?;
+
+    // pick the directory slot, retiring a previous copy if there is one
+    bool is_directory = false;
+    usize slot = find_entry(root, root_count, name, &is_directory);
+    if slot < root_count {
+        if is_directory || !replace {
+            return Error::NameInUse;
+        }
+
+        free_chain(fat, &g, Support::get_u16(entry(root, slot), 26) as u64);
+        delete_entry(root, slot);
+        report.replaced = true;
+    } else {
+        slot = find_free(root, root_count);
+        if slot == root_count {
+            return Error::DirectoryFull;
+        }
+    }
+
+    u64 needed = (source_size + g.bytes_per_cluster - 1) / g.bytes_per_cluster;
+    report.units = needed;
+
+    // gather the first `needed` free clusters
+    u64 found = 0;
+    for u64 cluster = 2; is_data_cluster(&g, cluster) && found < needed; cluster++ {
+        if fat_get(fat, cluster) == 0 {
+            g_chain[found as usize] = cluster as u16;
+            found++;
+        }
+    }
+
+    if found < needed {
+        return Error::DiskFull;
+    }
+
+    // link the chain in the in-memory FAT
+    for u64 i = 0; i + 1 < needed; i++ {
+        fat_set(fat, g_chain[i as usize] as u64, g_chain[(i + 1) as usize]);
+    }
+    fat_set(fat, g_chain[(needed - 1) as usize] as u64, END_OF_CHAIN);
+
+    u64 first_cluster = g_chain[0] as u64;
+    report.first_cluster = first_cluster;
+
+    // copy the data, zero padding the final cluster
+    [] u8 cluster_buffer = Support::bytes(
+        &g_cluster[0],
+        g.bytes_per_cluster as usize
+    );
+
+    u64 position = 0;
+    for u64 i = 0; i < needed; i++ {
+        u64 chunk = source_size - position;
+        if chunk > g.bytes_per_cluster {
+            chunk = g.bytes_per_cluster;
+        }
+
+        Support::zero(cluster_buffer);
+        Support::read_exact(
+            source,
+            position,
+            Support::view(cluster_buffer, 0, chunk as usize),
+            Error::SourceRead
+        ) ?;
+
+        u64 cluster = g_chain[i as usize] as u64;
+        u64 target = g.data_offset + (cluster - 2) * g.bytes_per_cluster;
+        Support::write_all(image, target, cluster_buffer, Error::ImageWrite) ?;
+
+        position += chunk;
+    }
+
+    // every FAT copy receives the updated table
+    for u64 copy = 0; copy < g.fat_count; copy++ {
+        Support::write_all(
+            image,
+            g.fat_offset + copy * g.fat_bytes,
+            fat,
+            Error::ImageWrite
+        ) ?;
+    }
+
+    open_first_slot(root, slot);
+    fill_entry(entry(root, 0), name, first_cluster, source_size);
+    Support::write_all(image, g.root_offset, root, Error::ImageWrite) ?;
+
+    return Error::None;
+}

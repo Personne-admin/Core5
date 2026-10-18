@@ -1,0 +1,246 @@
+//!!
+//!! Places a boot loader's second stage where the first stage can find it
+//!! as specificied by the Boot Loader architecture document
+//!!
+module Main;
+
+import Platform;
+import Support;
+import Arguments;
+import Fat12;
+import Mbr;
+
+using Error = Support::Error;
+using Report = Support::Report;
+using Text = Support::Text;
+using ShortName = Support::ShortName;
+using Options = Arguments::Options;
+using Problem = Arguments::Problem;
+using Layout = Arguments::Layout;
+using FileHandle = Platform::FileHandle;
+using FileMode = Platform::FileMode;
+
+using [] const char TOOL = "Install FAT Boot File: ";
+using u64 SECTOR_BYTES = 512;
+
+public i32 main() {
+    Options options;
+    Problem problem = Arguments::parse(&options);
+
+    if options.help {
+        Arguments::print_usage();
+        return 0;
+    }
+
+    if problem.message.len != 0 {
+        Text t;
+        t.reset();
+        t.append(TOOL);
+        t.append(problem.message);
+
+        if problem.argument.len != 0 {
+            t.append(" '");
+            t.append(problem.argument);
+            t.append("'");
+        }
+
+        t.append("\nRun with -Help for usage.\n");
+        Platform::print_error(t.contents());
+
+        return 2;
+    }
+
+    Report report;
+    report.clear();
+
+    Error error = run(&options, &report);
+    if error != Error::None {
+        report_failure(&options, error, &report);
+        return 1;
+    }
+
+    if !options.quiet {
+        report_success(&options, &report);
+    }
+
+    return 0;
+}
+
+//!
+//! Installation
+//!
+
+/// picks the layout for an image whose boot sector is `boot`
+Error choose_layout(Layout requested, [] const u8 boot, Layout* chosen) {
+    *chosen = requested;
+    if requested != Layout::Auto {
+        return Error::None;
+    }
+
+    // a well-formed partition table wins
+    if Mbr::has_fat32_partition(boot) {
+        *chosen = Layout::Mbr;
+        return Error::None;
+    }
+
+    if Fat12::looks_like_bpb(boot) {
+        *chosen = Layout::Fat12;
+        return Error::None;
+    }
+
+    return Error::UnknownLayout;
+}
+
+Error run(const Options* options, Report* report) {
+    ShortName name;
+    Support::parse_short_name(options.name, &name) ?;
+
+    FileHandle source = Platform::INVALID_HANDLE;
+    Support::open_file(
+        options.source_path,
+        FileMode::ReadOnly,
+        &source,
+        Error::SourceOpen
+    ) ?;
+    defer Platform::close_file(source);
+
+    u64 source_size = 0;
+    Support::file_size(source, &source_size, Error::SourceRead) ?;
+    if source_size == 0 {
+        return Error::SourceEmpty;
+    }
+
+    FileHandle image = Platform::INVALID_HANDLE;
+    Support::open_file(
+        options.image_path,
+        FileMode::ReadWrite,
+        &image,
+        Error::ImageOpen
+    ) ?;
+    defer Platform::close_file(image);
+
+    u64 image_size = 0;
+    Support::file_size(image, &image_size, Error::ImageRead) ?;
+    if image_size < SECTOR_BYTES {
+        return Error::ImageTruncated;
+    }
+
+    u8[512] sector;
+    [] u8 boot = Support::bytes(&sector[0], 512);
+    Support::read_exact(image, 0, boot, Error::ImageRead) ?;
+
+    if Support::get_u16(boot, 510) != 0xAA55 {
+        return Error::NoSignature;
+    }
+
+    Layout layout = Layout::Auto;
+    choose_layout(options.layout, boot, &layout) ?;
+
+    if layout == Layout::Mbr {
+        return Mbr::install(
+            image,
+            image_size,
+            boot,
+            source,
+            source_size,
+            report
+        );
+    }
+
+    return Fat12::install(
+        image,
+        image_size,
+        boot,
+        source,
+        source_size,
+        &name,
+        options.replace,
+        report
+    );
+}
+
+//!
+//! Reporting
+//!
+
+void report_success(const Options* options, const Report* report) {
+    Text t;
+    t.reset();
+    t.append("Installed ");
+    t.append(options.source_path);
+    t.append(" (");
+    t.append_u64(report.bytes);
+    t.append(" bytes) into ");
+    t.append(options.image_path);
+
+    if report.fat12 {
+        t.append(" as ");
+        t.append(options.name);
+        t.append(": ");
+        t.append_u64(report.units);
+        t.append(
+            if report.units == 1 {
+                " cluster"
+            } else {
+                " clusters"
+            }
+        );
+        t.append(" from cluster ");
+        t.append_u64(report.first_cluster);
+        if report.replaced {
+            t.append(", replacing the previous copy");
+        }
+    } else {
+        t.append(": ");
+        t.append_u64(report.units);
+        t.append(
+            if report.units == 1 {
+                " sector"
+            } else {
+                " sectors"
+            }
+        );
+        t.append(" from LBA 1 (gap of ");
+        t.append_u64(report.gap_sectors);
+        t.append(", ");
+        t.append_u64(report.usable_sectors);
+        t.append(" usable)");
+    }
+
+    t.append("\n");
+    Platform::print_out(t.contents());
+}
+
+void report_failure(const Options* options, Error error, const Report* report) {
+    Text t;
+    t.reset();
+    t.append(TOOL);
+    t.append(Support::describe(error));
+
+    [] const char path = match error {
+        Error::SourceOpen | Error::SourceRead | Error::SourceEmpty | Error::SourceTooLarge => options.source_path,
+        Error::ImageOpen | Error::ImageRead | Error::ImageWrite | Error::ImageTruncated => options.image_path,
+        Error::InvalidName | Error::NameInUse => options.name,
+        _ => "",
+    };
+    if path.len != 0 {
+        t.append(" '");
+        t.append(path);
+        t.append("'");
+    }
+
+    if error == Error::GapTooSmall {
+        t.append(" (needs ");
+        t.append_u64(report.units);
+        t.append(" sectors, ");
+        t.append_u64(report.usable_sectors);
+        t.append(" usable of ");
+        t.append_u64(report.gap_sectors);
+        t.append(" in the gap)");
+    } else if error == Error::NameInUse && options.replace {
+        t.append(" and is a directory");
+    }
+
+    t.append("\n");
+    Platform::print_error(t.contents());
+}

@@ -24,9 +24,9 @@ partition.
 
 On floppy disks, the stage 1 uses the standard Read Sectors
 into Memory INT 13h BIOS function to load the FAT12 filesystem
-information into memory, walk the filesystem's root directory,
-locate a file called BOOT.BIN--the second stage Boot Loader--in
-it and load it into memory.
+information into memory, find the 0th root directory entry which
+must contain a file called BOOT.BIN--the second stage Boot Loader--
+and then proceeds to load it into memory.
 
 On failure of either path, the stage 1 simply outputs "Boot
 error", prompting the user to press any key to reboot. Due
@@ -59,11 +59,10 @@ with at least one FAT32-like partition.
 Based on this it employs the appropriate mechanism for
 installing the stage 2 to the disk image.
 
-For floppy disk images, it simply walks the root directory
-directory entries, looking for a suitable (empty or deleted)
-entry. Once it is found and space constraints are verified,
-space for the stage 2 is allocated in the data area, a FAT
-cluster chain is created and linked to the directory entry.
+For floppy disk images, it simply looks for an empty entry
+slot into which it could shift the other entries in order to
+free root directory entry slot 0, then space is allocated and
+a FAT cluster chain is created and linked into this entry.
 
 Time-related metadata is currently stubbed, with ambitions
 for proper implementation of transfer thereof.

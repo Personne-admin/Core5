@@ -1,0 +1,137 @@
+//!!
+//!! MBR installation module
+//!!
+module Mbr;
+
+import Platform;
+import Support;
+
+public using Error = Support::Error;
+public using Report = Support::Report;
+using FileHandle = Platform::FileHandle;
+
+using u64 SECTOR_BYTES = 512;
+using usize TABLE_OFFSET = 446;
+using usize TABLE_ENTRIES = 4;
+using usize TABLE_ENTRY_BYTES = 16;
+
+/// stage 1 loads at most this many sectors, whatever the gap allows.
+using u64 MAX_STAGE2_SECTORS = 59;
+
+using usize STAGE2_BUFFER_BYTES = 30208;
+using u8 TYPE_EMPTY = 0x00;
+using u8 TYPE_GPT_PROTECTIVE = 0xEE;
+
+u8[STAGE2_BUFFER_BYTES] g_stage2;
+
+struct Partition {
+    u8 status;
+    u8 kind;
+    u64 start;
+    u64 sectors;
+}
+
+Partition partition([] const u8 boot, usize index) {
+    usize at = TABLE_OFFSET + index * TABLE_ENTRY_BYTES;
+
+    return Partition {
+        status = boot[at],
+        kind = boot[at + 4],
+        start = Support::get_u32(boot, at + 8) as u64,
+        sectors = Support::get_u32(boot, at + 12) as u64,
+    };
+}
+
+bool is_fat32_type(u8 kind) {
+    // fat32 CHS, LBA, and their hidden variants
+    return kind == 0x0B || kind == 0x0C || kind == 0x1B || kind == 0x1C;
+}
+
+/// true when the partition table is well formed
+public bool has_fat32_partition([] const u8 boot) {
+    bool found = false;
+    for usize i = 0; i < TABLE_ENTRIES; i++ {
+        Partition p = partition(boot, i);
+        if p.status != 0x00 && p.status != 0x80 {
+            return false;
+        }
+
+        if is_fat32_type(p.kind) && p.start != 0 && p.sectors != 0 {
+            found = true;
+        }
+    }
+
+    return found;
+}
+
+/// copies `source` to LBA 1 and zero pads its final sector
+public Error install(
+    FileHandle image,
+    u64 image_size,
+    [] const u8 boot,
+    FileHandle source,
+    u64 source_size,
+    Report* report
+) {
+    report.fat12 = false;
+    report.bytes = source_size;
+
+    u64 lowest = 0;
+    bool any = false;
+    for usize i = 0; i < TABLE_ENTRIES; i++ {
+        Partition p = partition(boot, i);
+        if p.kind == TYPE_GPT_PROTECTIVE {
+            return Error::ProtectiveMbr;
+        }
+
+        if p.kind == TYPE_EMPTY || p.start == 0 {
+            continue;
+        }
+
+        if !any || p.start < lowest {
+            lowest = p.start;
+            any = true;
+        }
+    }
+
+    if !any {
+        return Error::NoPartition;
+    }
+
+    u64 gap = lowest - 1;
+    u64 usable = if gap < MAX_STAGE2_SECTORS {
+        gap
+    } else {
+        MAX_STAGE2_SECTORS
+    };
+
+    u64 needed = (source_size + SECTOR_BYTES - 1) / SECTOR_BYTES;
+    report.gap_sectors = gap;
+    report.usable_sectors = usable;
+    report.units = needed;
+
+    if needed > usable {
+        return Error::GapTooSmall;
+    }
+
+    if (needed + 1) * SECTOR_BYTES > image_size {
+        return Error::ImageTruncated;
+    }
+
+    [] u8 stage2 = Support::bytes(
+        &g_stage2[0],
+        (needed * SECTOR_BYTES) as usize
+    );
+
+    Support::zero(stage2);
+    Support::read_exact(
+        source,
+        0,
+        Support::view(stage2, 0, source_size as usize),
+        Error::SourceRead
+    ) ?;
+
+    Support::write_all(image, SECTOR_BYTES, stage2, Error::ImageWrite) ?;
+
+    return Error::None;
+}

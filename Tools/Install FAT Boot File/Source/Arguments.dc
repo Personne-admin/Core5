@@ -1,0 +1,169 @@
+//!!
+//!! Command line parsing module
+//!!
+module Arguments;
+
+import Platform;
+import Support;
+
+public enum Layout : u8 {
+    Auto,
+    Fat12,
+    Mbr,
+}
+
+public struct Options {
+    [] const char image_path;
+    [] const char source_path;
+    [] const char name;
+    Layout layout;
+    bool replace;
+    bool quiet;
+    bool help;
+}
+
+/// why parsing failed
+public struct Problem {
+    [] const char message;
+    [] const char argument;
+}
+
+Problem problem([] const char message, [] const char argument) {
+    return Problem {message = message, argument = argument};
+}
+
+bool is_flag([] const char word, [] const char a, [] const char b) {
+    return Support::equals_ignore_case(word, a) || Support::equals_ignore_case(
+        word,
+        b
+    );
+}
+
+public Problem parse(Options* o) {
+    o.image_path = "";
+    o.source_path = "";
+    o.name = "BOOT.BIN";
+    o.layout = Layout::Auto;
+    o.replace = true;
+    o.quiet = false;
+    o.help = false;
+
+    bool seen_name = false;
+    bool seen_layout = false;
+
+    usize count = Platform::get_arg_count();
+    usize i = 1;
+    while i < count {
+        [] const char flag = Platform::get_arg(i);
+        i++;
+
+        // switches without a value
+        if is_flag(flag, "-Help", "--help") || is_flag(flag, "-h", "-?") {
+            o.help = true;
+            continue;
+        }
+        if is_flag(flag, "-NoReplace", "--no-replace") {
+            o.replace = false;
+            continue;
+        }
+        if is_flag(flag, "-Quiet", "--quiet") {
+            o.quiet = true;
+            continue;
+        }
+
+        bool image = is_flag(flag, "-Image", "--image");
+        bool source = is_flag(flag, "-Source", "--source");
+        bool name = is_flag(flag, "-Name", "--name");
+        bool layout = is_flag(flag, "-Layout", "--layout");
+
+        if !image && !source && !name && !layout {
+            return problem("unknown argument", flag);
+        }
+
+        if i >= count {
+            return problem("missing value after", flag);
+        }
+
+        [] const char value = Platform::get_arg(i);
+        i++;
+        if value.len == 0 {
+            return problem("empty value after", flag);
+        }
+
+        if image {
+            if o.image_path.len != 0 {
+                return problem("repeated argument", flag);
+            }
+            o.image_path = value;
+        } else if source {
+            if o.source_path.len != 0 {
+                return problem("repeated argument", flag);
+            }
+            o.source_path = value;
+        } else if name {
+            if seen_name {
+                return problem("repeated argument", flag);
+            }
+            seen_name = true;
+            o.name = value;
+        } else {
+            if seen_layout {
+                return problem("repeated argument", flag);
+            }
+
+            seen_layout = true;
+            if Support::equals_ignore_case(value, "auto") {
+                o.layout = Layout::Auto;
+            } else if Support::equals_ignore_case(value, "fat12") {
+                o.layout = Layout::Fat12;
+            } else if Support::equals_ignore_case(value, "mbr") {
+                o.layout = Layout::Mbr;
+            } else {
+                return problem("layout must be auto, fat12 or mbr, not", value);
+            }
+        }
+    }
+
+    if o.help {
+        return problem("", "");
+    }
+
+    if o.image_path.len == 0 {
+        return problem("missing -Image <path>", "");
+    }
+
+    if o.source_path.len == 0 {
+        return problem("missing -Source <path>", "");
+    }
+
+    return problem("", "");
+}
+
+public void print_usage() {
+    Platform::print_out(
+        "Usage: Install FAT Boot File -Image <image> -Source <binary> [options]\n"
+    );
+    Platform::print_out("\n");
+    Platform::print_out(
+        "Installs a boot file into a disk image. The layout is detected from LBA0:\n"
+    );
+    Platform::print_out(
+        "  FAT12 volume   the file is stored as root directory entry 0\n"
+    );
+    Platform::print_out(
+        "  MBR + FAT32    the file is written from LBA 1, before the first partition\n"
+    );
+    Platform::print_out("\n");
+    Platform::print_out("Options:\n");
+    Platform::print_out("  -Image <path>    disk image to modify (required)\n");
+    Platform::print_out("  -Source <path>   file to install (required)\n");
+    Platform::print_out(
+        "  -Name <8.3>      FAT12 file name, default BOOT.BIN\n"
+    );
+    Platform::print_out("  -Layout <kind>   auto, fat12 or mbr, default auto\n");
+    Platform::print_out(
+        "  -NoReplace       fail instead of replacing an existing FAT12 entry\n"
+    );
+    Platform::print_out("  -Quiet           print nothing on success\n");
+    Platform::print_out("  -Help            show this text\n");
+}
