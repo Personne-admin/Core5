@@ -1,4 +1,4 @@
-Core 5 Truth
+    Core 5 Truth
 
 Core 5 Truth, also referred to as the truth or the source of truth,
 is the unified configuration and object namespace mechanism used by
