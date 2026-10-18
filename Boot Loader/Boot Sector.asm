@@ -37,13 +37,29 @@ match =Stage2Path, Stage2Path
 end match
 
 virtual at 0
+	Stage2Data::
 	file Stage2Path
 	Stage2Size = $
 end virtual
 
 Stage2Sectors = (Stage2Size + 511) shr 9
 
-assert Stage2Sectors >= 1 & Stage2Sectors <= 59
+assert Stage2Size >= 1 & Stage2Size <= Stage2MaxSize
+
+; CRC-32 (IEEE 802.3, with polynomial 0xEDB88320) computed at build time
+; This is the register value BEFORE the final inversion
+Stage2Crc = 0xFFFFFFFF
+repeat Stage2Size, i:0
+	load Stage2Byte:1 from Stage2Data:i
+	Stage2Crc = Stage2Crc xor Stage2Byte
+	repeat 8
+		if Stage2Crc and 1
+			Stage2Crc = (Stage2Crc shr 1) xor 0xEDB88320
+		else
+			Stage2Crc = Stage2Crc shr 1
+		end if
+	end repeat
+end repeat
 
 Start:
 	xor	ax, ax
@@ -59,28 +75,40 @@ Start:
 	jns	Floppy
 
 HardDisk:
-	; IBM/MS INT 13 Extensions - INSTALLATION CHECK
-	; AH = 41h
-	; BX = 55AAh
-	; DL = drive (80h-FFh)
-	mov	ah, 0x41
-	mov	bx, 0x55AA
-	int	0x13
-	jc	Error
-
-	cmp	bx, 0xAA55
-	jne	Error
-
-	; packet interface supported?
-	test	cl, 1
-	jz	Error
-
+	; do not check for BIOS extension, let it fail on the read and report 'D'
 	inc	byte [UseLBA]
 
-	mov	ax, 1
+	inc	ax
 	mov	cx, Stage2Sectors
 	mov	bx, Stage2LoadAddress
 	call	ReadSectors
+
+Verify:
+	; CRC-32 over exactly Stage2Size bytes, dx:ax is the 32-bit register
+	mov	si, Stage2LoadAddress
+	mov	cx, Stage2Size
+	mov	ax, -1
+	mov	dx, ax
+.Byte:
+	xor	al, [si]
+	inc	si
+	mov	bl, 8
+.Bit:
+	shr	dx, 1
+	rcr	ax, 1
+	jnc	.NoXor
+	xor	dx, 0xEDB8
+	xor	ax, 0x8320
+.NoXor:
+	dec	bl
+	jnz	.Bit
+	loop	.Byte
+
+	xor	ax, Stage2Crc and 0xFFFF
+	xor	dx, Stage2Crc shr 16
+	or	ax, dx
+	mov	al, 'C'
+	jnz	Error
 
 Launch:
 	mov	dl, [EBR.DriveNumber]
@@ -92,42 +120,78 @@ Floppy:
 	mul	word [BPB.SectorsPerFat]
 	add	ax, [BPB.ReservedSectors]
 
-	; calculate the number of sectors in the directory
+	; data lba = root lba + root directory sectors
 	mov	cx, [BPB.RootEntries]
 	add	cx, 15
 	shr	cx, 4
+	add	cx, ax
+	mov	[DataLBA], cx
 
-	; calculate the data section lba
-	push	ax
-	add	ax, cx
-	mov	[DataLBA], ax
-	pop	ax
-
-	; load the root directory
+	; BOOT.BIN is guaranteed to be entry 0
+	inc	cx
 	mov	bx, TransitionBuffer
 	call	ReadSectors
 
-	; search the root directory for BOOT.BIN
-	mov	cx, [BPB.RootEntries]
-	mov	di, TransitionBuffer
-.Search:
-	cmp	byte [di], 0											; eod
-	je	Error
+	; entry 0 must have exactly this build's size
+	cmp	word [TransitionBuffer + 28], Stage2Size
+	mov	al, 'S'
+	jne	Error
 
-	push	cx di
+	cmp	word [TransitionBuffer + 30], 0
+	jne	Error
 
-	mov	si, Stage2FileName
-	mov	cx, 11
-	repe	cmpsb
+	push	word [TransitionBuffer + 26]							; first cluster
 
-	pop	di cx
+	; load FAT #0 over the directory sector
+	mov	ax, [BPB.ReservedSectors]
+	mov	cx, [BPB.SectorsPerFat]
+	mov	bx, TransitionBuffer
+	call	ReadSectors
 
-	je	LoadStage2
+	; walk exactly Stage2Sectors clusters
+	pop	ax
+	mov	bx, Stage2LoadAddress
+	mov	bp, Stage2Sectors
+.NextCluster:
+	push	ax
 
-	; next entry
-	add	di, 32
-	loop	.Search
+	; 0x002..0xFEF are data clusters, reject the rest
+	dec	ax
+	dec	ax
+	cmp	ax, 0xFF0 - 2
+	jae	.BadChain
+
+	add	ax, [DataLBA]
+	mov	cx, 1
+	call	ReadSectors
+
+	pop	ax
+
+	; FAT12 entry lives at cluster * 1.5
+	mov	si, ax
+	shr	si, 1
+	add	si, ax
+	mov	dx, [si + TransitionBuffer]
+	test	al, 1
+	jz	.Even
+
+	; entry is the high 12 bits, shift them into the low ones
+	shr	dx, 4
+.Even:
+	and	dx, 0xFFF
+	xchg	ax, dx
+
+	dec	bp
+	jnz	.NextCluster
+	jmp	Verify
+
+.BadChain:
+	mov	al, 'F'
+	; fall through
+
+; al = error code character
 Error:
+	mov	[ErrorCode], al
 	mov	si, ErrorMessage
 .Print:
 	lodsb
@@ -152,72 +216,6 @@ WaitKeyStroke:
 Reboot:
 	; SYSTEM - BOOTSTRAP LOADER
 	int	0x19
-
-LoadStage2:
-	; verify the size limit
-	cmp	word [di + 30], 0
-	jne	Error
-	cmp	word [di + 28], Stage2MaxSize
-	ja	Error
-
-	push	word [di + 26]											; first cluster
-
-	; load FAT #0
-	mov	ax, [BPB.ReservedSectors]
-	mov	cx, [BPB.SectorsPerFat]
-	mov	bx, TransitionBuffer
-	call	ReadSectors
-
-	; follow the cluster chain
-	pop	ax
-	mov	bx, Stage2LoadAddress
-.NextCluster:
-	; a cyclic or overlong chain would run into the stack and this sector
-	; (exact for 1 sector per cluster)
-	cmp	bx, Stage2LoadAddress + Stage2MaxSize
-	jae	Error
-
-	push	ax
-
-	sub	ax, 2
-	mov	cl, [BPB.SectorsPerCluster]
-	xor	ch, ch
-	mul	cx
-	add	ax, [DataLBA]
-	call	ReadSectors
-
-	pop	ax
-
-	; calculate the address of the entry
-	mov	si, ax
-	shr	si, 1
-	add	si, ax
-
-	; load-now determine parity later, movzx doesn't touch flags
-	mov	dx, [si + TransitionBuffer]
-	test	al, 1
-	jz	.Even
-
-	; entry is the high 12 bits, shift them into the low ones
-	shr	dx, 4
-.Even:
-	and	dx, 0xFFF
-	xchg	ax, dx
-
-	; 0x000 free, 0x001 reserved, chain is broken
-	cmp	ax, 2
-	jb	Error
-
-	; 0x002..0xFEF: next cluster
-	cmp	ax, 0xFF0
-	jb	.NextCluster
-
-	; 0xFF0..0xFF6 reserved, 0xFF7 bad cluster
-	cmp	ax, 0xFF8
-	jb	Error
-
-	; 0xFF8..0xFFF: end of chain
-	jmp	Launch
 
 ; ax = starting lba, cx = sector count, es:bx = destination buffer
 ; returns ax/bx advanced
@@ -286,6 +284,19 @@ ReadSectors:
 .Check:
 	jnc	.Ok
 
+	; record the BIOS status as two hex digits for the error message
+	mov	di, ErrorStatus
+	mov	cx, 2
+.Hex:
+	rol	ah, 4
+	mov	al, ah
+	and	al, 0xF
+	cmp	al, 10
+	sbb	al, 0x69
+	das
+	stosb
+	loop	.Hex
+
 	; DISK - RESET DISK SYSTEM
 	; AH = 00h
 	; DL = drive (if bit 7 is set both hard disks and floppy disks reset)
@@ -297,6 +308,7 @@ ReadSectors:
 	; try again
 	dec	di
 	jnz	.Retry
+	mov	al, 'D'
 	jmp	Error
 
 .Ok:
@@ -308,8 +320,9 @@ ReadSectors:
 
 	ret
 
-Stage2FileName:	db 'BOOT    BIN'
-ErrorMessage:	db 'Boot error', 13, 10, 0
+ErrorMessage:	db 'Boot error '
+ErrorCode:		db '?', ' '
+ErrorStatus:	db '--', 13, 10, 0
 
 assert	$ - $$ <= 0x1B8
 

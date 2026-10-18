@@ -28,10 +28,18 @@ information into memory, find the 0th root directory entry which
 must contain a file called BOOT.BIN--the second stage Boot Loader--
 and then proceeds to load it into memory.
 
-On failure of either path, the stage 1 simply outputs "Boot
-error", prompting the user to press any key to reboot. Due
-to size constraints, no further information can be given
-without making the error output cryptic to the end user.
+On failure of either path, the stage 1 outputs a "Boot error"
+message followed by a single-letter code which defines what
+has gone wrong.
+
+If the BIOS failed to read the drive after 3 attempts, D
+If root directory entry 0 isn't the correct BOOT.BIN, S
+If a broken / corrupted FAT chain is encountered, F
+If the Cyclic Redundancy Check of the stage 2 fails, C
+
+For every BIOS read failure (no matter if the final fault
+is a D or any other code) the BIOS status is recorded and
+the last failure error is printed on failure.
 
 The stage 1 is also heavily size constrained since the same
 binary must still contain the BIOS Parameter Block and the
